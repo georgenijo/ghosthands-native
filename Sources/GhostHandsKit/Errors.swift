@@ -17,6 +17,14 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     case ambiguousMatch(name: String, candidates: [String])
     /// The element was found but rejected the AX action (no-op at the AX layer).
     case actionRejected(name: String, action: String)
+    /// Screen Recording permission not granted — `shot` REFUSES rather than
+    /// write the black image the OS hands back without the grant.
+    case screenRecordingNotTrusted
+    /// The app has no on-screen windows to capture (nothing to shoot).
+    case noWindows(app: String)
+    /// Capture was attempted (with permission) but produced no usable pixels —
+    /// e.g. an off-screen/occluded window. Honest REFUSE, no blank PNG written.
+    case captureFailed(reason: String)
 
     public var description: String {
         switch self {
@@ -38,6 +46,14 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .actionRejected(name, action):
             return "\(action) rejected by \(name.debugDescription) — element "
                 + "found but did not accept the action"
+        case .screenRecordingNotTrusted:
+            return "Screen Recording not granted — enable 'ghosthands' (or the "
+                + "launching terminal) in System Settings ▸ Privacy & Security ▸ "
+                + "Screen Recording. The AX tree still works: try ghosthands snapshot"
+        case let .noWindows(app):
+            return "no on-screen windows to capture in \(app)"
+        case let .captureFailed(reason):
+            return "screenshot capture failed: \(reason)"
         }
     }
 }

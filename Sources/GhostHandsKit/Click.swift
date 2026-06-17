@@ -19,10 +19,110 @@ public struct ClickOutcome: Sendable, Equatable {
     public let evidence: String?
     public let valueBefore: String?
     public let valueAfter: String?
+    /// When the VERIFIED claim rests on a sibling (the M2 effect-witness path),
+    /// this names which value-bearing element changed and its before → after,
+    /// so the claim is independently auditable — never a bare "success:true".
+    public let witnessName: String?
+    public let witnessBefore: String?
+    public let witnessAfter: String?
+
+    public init(app: String, name: String, role: String, axAccepted: Bool,
+                verified: Bool, evidence: String?, valueBefore: String?,
+                valueAfter: String?, witnessName: String? = nil,
+                witnessBefore: String? = nil, witnessAfter: String? = nil) {
+        self.app = app
+        self.name = name
+        self.role = role
+        self.axAccepted = axAccepted
+        self.verified = verified
+        self.evidence = evidence
+        self.valueBefore = valueBefore
+        self.valueAfter = valueAfter
+        self.witnessName = witnessName
+        self.witnessBefore = witnessBefore
+        self.witnessAfter = witnessAfter
+    }
 
     public var valueChanged: Bool { valueBefore != valueAfter }
     /// The AX layer accepted the dispatch. NOT proof of effect — see `verified`.
     public var landed: Bool { axAccepted }
+}
+
+/// The pure verdict for a click — promotes a press to VERIFIED when the pressed
+/// element's OWN value changed, OR it became disabled, OR it is CONFIRMED gone
+/// (absent across a settle-retry — a single miss is NOT proof), OR exactly one
+/// scoped witness changed. Kept pure (no AX) so the false-positive scoping is
+/// hermetically unit-testable. Inputs are the read-back facts; output is the
+/// honest verdict.
+public enum ClickVerdict {
+    /// The structural state of the pressed control on read-back, distilled from
+    /// AX so the verdict stays pure. `presentValue` carries the CURRENT value of
+    /// a still-present control (for the value-flip check); the absent/disabled
+    /// cases carry no value.
+    public enum SelfReadback: Sendable, Equatable {
+        /// Still present and pressable on read-back; `value` is its value now.
+        case present(value: String?)
+        /// Found by identity but now reports disabled — a real observed change.
+        case disabled
+        /// CONFIRMED absent: not found across the settle-retry (two reads). Only
+        /// this — never a single miss — may stand as structural evidence.
+        case goneConfirmed
+        /// Missed on read-back but NOT corroborated by a second read. Structurally
+        /// identical to a flaky/cold read, so it is NOT evidence on its own — we
+        /// fall through to the witness diff and otherwise under-claim.
+        case goneUnconfirmed
+    }
+
+    public enum Result: Sendable, Equatable {
+        /// Observed change. `evidence` is the human string; `witness` is set
+        /// only when the proof came from a sibling (name, before, after).
+        case verified(evidence: String, witness: (name: String, before: String?, after: String?)?)
+        /// AX accepted but nothing observable changed — honest under-claim.
+        case dispatched
+
+        public static func == (lhs: Result, rhs: Result) -> Bool {
+            switch (lhs, rhs) {
+            case let (.verified(e1, w1), .verified(e2, w2)):
+                return e1 == e2 && w1?.name == w2?.name
+                    && w1?.before == w2?.before && w1?.after == w2?.after
+            case (.dispatched, .dispatched): return true
+            default: return false
+            }
+        }
+    }
+
+    /// Decide the verdict from honest structural facts.
+    ///
+    /// Order of self-evidence (each is an OBSERVED change of the pressed control):
+    /// 1. value flip (present, new value ≠ old) — quote before → after,
+    /// 2. now disabled — the press disabled the control (a real state change),
+    /// 3. CONFIRMED gone — absent across two reads (a single miss is rejected as
+    ///    indistinguishable from a flaky/cold post-press read).
+    /// Only if the pressed element yields NO self-evidence do we consult the
+    /// witness diff; an `.ambiguous` (2+ changed) diff stays DISPATCHED. An
+    /// UNCONFIRMED miss is never self-evidence — it can only ride on a witness.
+    public static func decide(selfBefore: String?, readback: SelfReadback,
+                              witnessDiff: WitnessMatch.Verdict) -> Result {
+        switch readback {
+        case let .present(value):
+            if selfBefore != value {
+                return .verified(evidence: "value \(selfBefore ?? "nil") → \(value ?? "nil")",
+                                 witness: nil)
+            }
+        case .disabled:
+            return .verified(evidence: "target now disabled after press", witness: nil)
+        case .goneConfirmed:
+            return .verified(evidence: "target no longer present after press (confirmed on re-read)",
+                             witness: nil)
+        case .goneUnconfirmed:
+            break  // a single missed read is not proof — fall through to the witness
+        }
+        if case let .changed(name, before, after) = witnessDiff {
+            return .verified(evidence: "\(name) \(before ?? "nil") → \(after ?? "nil")",
+                             witness: (name, before, after))
+        }
+        return .dispatched
+    }
 }
 
 extension GhostHands {
@@ -60,7 +160,25 @@ extension GhostHands {
 
         let role = facts.role ?? "AXUnknown"
         let before = facts.value
+        // Value-inclusive identity is still used to re-locate the witness window;
+        // the structural read-back uses the value-EXCLUDED stable key so a value
+        // flip doesn't read as a disappearance.
         let identity = NameMatch.identityKey(facts)
+        let stableIdentity = NameMatch.stableIdentityKey(facts)
+
+        // BEFORE the press: snapshot value-bearing witnesses scoped to the
+        // pressed control's enclosing window subtree (so an unrelated window or
+        // the menu-bar clock can never become false evidence). We also pin that
+        // window's stable CGWindowID so the AFTER walk re-reads the SAME window
+        // by identity — never a positional "window 0" fallback, which on a
+        // multi-window app could diff witnesses across the WRONG window and
+        // fabricate a change our press never caused. If we can't resolve a
+        // window id the witness set is abandoned (self-only verification — the
+        // honest under-claim).
+        let windowResolver = AXWindowResolver()
+        let witnessWindow = Finder.enclosingWindow(of: element)
+        let beforeWindowID = witnessWindow.flatMap { windowResolver.windowID(from: $0) }
+        let witnessesBefore = witnessWindow.map { Finder.witnesses(in: $0) } ?? []
 
         guard element.press() else {
             throw GhostHandsError.actionRejected(name: name, action: "AXPress")
@@ -71,29 +189,92 @@ extension GhostHands {
         if settle > 0 { Thread.sleep(forTimeInterval: settle) }  // CLI is one-shot; main thread is free to block
         let freshRoot = Element(AXUIElementCreateApplication(target.pid))
 
-        let after: String?
-        let gone: Bool
-        if let fresh = Finder.refind(identity: identity, named: name, under: freshRoot) {
-            after = axString(fresh.value())
-            gone = false
-        } else {
-            after = nil
-            gone = true  // the control changed/relabelled/disappeared — itself evidence
+        // Structural read-back: present (with current value) / now-disabled /
+        // absent. A bare "absent" is NOT yet evidence — the project's own AX
+        // read flakiness (EAGAIN / cold post-press tree) produces the same miss.
+        var readbackRoot = freshRoot
+
+        let readback: ClickVerdict.SelfReadback
+        switch Finder.readback(stableIdentity: stableIdentity, named: name, under: freshRoot) {
+        case let .present(f):
+            readback = .present(value: f.value)
+        case .disabled:
+            readback = .disabled
+        case .absent:
+            // CONFIRM the disappearance with a settle + second read off another
+            // fresh root, exactly as find()/snapshot() guard their empty results.
+            // Only an absence corroborated by a SECOND read is treated as the
+            // structural "gone" evidence; a one-off miss stays unconfirmed and
+            // can never, by itself, become VERIFIED.
+            if settle > 0 { Thread.sleep(forTimeInterval: settle) }
+            let secondRoot = Element(AXUIElementCreateApplication(target.pid))
+            readbackRoot = secondRoot
+            switch Finder.readback(stableIdentity: stableIdentity, named: name, under: secondRoot) {
+            case let .present(f):
+                readback = .present(value: f.value)   // it was just a flaky first read
+            case .disabled:
+                readback = .disabled
+            case .absent:
+                readback = .goneConfirmed             // absent across two reads → real
+            }
         }
 
-        let valueChanged = before != after
-        let verified = valueChanged || gone
-        let evidence: String?
-        if valueChanged {
-            evidence = "value \(before ?? "nil") → \(after ?? "nil")"
-        } else if gone {
-            evidence = "target no longer present after press"
+        // The value to REPORT as `valueAfter` is the control's current value when
+        // it is still present; for disabled / gone there is no current value to
+        // quote, so it is nil (the evidence string carries the state instead).
+        let after: String?
+        if case let .present(value) = readback { after = value } else { after = nil }
+
+        // AFTER the press: re-collect witnesses off a FRESH tree, scoped to the
+        // SAME window (matched by the pinned CGWindowID, never a positional
+        // fallback). We read the window TWICE — `after1`, settle, `after2` — and
+        // keep only witnesses that SETTLED (same value across both reads). A
+        // press drives a result to a new, stable value; an element changing for
+        // an unrelated reason (clock / animation / in-flight scroll) keeps
+        // moving and is dropped. The diff then compares BEFORE vs the settled
+        // AFTER and demotes to DISPATCHED on zero OR 2+ changes (under-claim).
+        let witnessDiff: WitnessMatch.Verdict
+        if let beforeWindowID, !witnessesBefore.isEmpty,
+           let freshWindow = readbackRoot.windows()?
+               .first(where: { windowResolver.windowID(from: $0) == beforeWindowID }) {
+            let after1 = Finder.witnesses(in: freshWindow)
+            if settle > 0 { Thread.sleep(forTimeInterval: settle) }
+            let secondWindow = Element(AXUIElementCreateApplication(target.pid)).windows()?
+                .first(where: { windowResolver.windowID(from: $0) == beforeWindowID })
+            let after2 = secondWindow.map { Finder.witnesses(in: $0) } ?? after1
+            let settledAfter = WitnessMatch.stable(after1, after2)
+            witnessDiff = WitnessMatch.diff(before: witnessesBefore, after: settledAfter)
         } else {
+            witnessDiff = .none
+        }
+
+        let verdict = ClickVerdict.decide(selfBefore: before, readback: readback,
+                                          witnessDiff: witnessDiff)
+
+        let verified: Bool
+        let evidence: String?
+        let witnessName: String?
+        let witnessBefore: String?
+        let witnessAfter: String?
+        switch verdict {
+        case let .verified(ev, witness):
+            verified = true
+            evidence = ev
+            witnessName = witness?.name
+            witnessBefore = witness?.before
+            witnessAfter = witness?.after
+        case .dispatched:
+            verified = false
             evidence = nil
+            witnessName = nil
+            witnessBefore = nil
+            witnessAfter = nil
         }
 
         return ClickOutcome(app: target.name, name: name, role: role,
                             axAccepted: true, verified: verified, evidence: evidence,
-                            valueBefore: before, valueAfter: after)
+                            valueBefore: before, valueAfter: after,
+                            witnessName: witnessName, witnessBefore: witnessBefore,
+                            witnessAfter: witnessAfter)
     }
 }

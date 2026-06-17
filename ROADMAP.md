@@ -61,8 +61,8 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Honest verdict: verified / pressed-unproven / refuse | ~ | ❌ | ✅ | ✅ | done (M1) |
 | Owns its hands (no borrowed daemon) | ❌ | ✅ | ✅ | ✅ | done (M1) |
 | Refuse on ambiguity (don't guess the wrong control) | ❌ | ❌ | ✅ | ✅ | done (M1) |
-| Read the screen (snapshot / find / screenshot) | ✅ | ✅ | ❌ | ✅ | **M2** |
-| Prove effects (effect-witness: read a sibling, e.g. the display) | ~ | ❌(AI guess) | ❌ | ✅ | **M2** |
+| Read the screen (snapshot / find / screenshot) | ✅ | ✅ | ✅ | ✅ | done (M2) |
+| Prove effects (effect-witness: read a sibling, e.g. the display) | ~ | ❌(AI guess) | ✅ | ✅ | done (M2) |
 | Type text (honest: set-value + verify it changed) | ❌ | ✅ | ❌ | ✅ | M3 |
 | Double-click / open files / NSOpenPanel dialogs | ✅ | ✅ | ❌ | ✅ | M3 |
 | Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ❌ | ✅ | M3 |
@@ -85,11 +85,13 @@ hands + eyes; whoever plugs in brings the brain.
 
 ## Milestones to fill every checkmark (M2–M5 — the complete tool)
 
-- **M2 — Read + Prove** *(Layer 1 read + Layer 2 honesty finisher).* Bring back
-  `snapshot` / `find` / `shot`. Add the **effect-witness**: after a press, read a
-  *sibling* element (e.g. Calculator's display) so a digit press comes back
-  **verified** ("0 → 789") instead of today's honest "unverified". This is the
-  next build and the highest-value honesty upgrade.
+- **M2 — Read + Prove** ✅ *(Layer 1 read + Layer 2 honesty finisher).* `snapshot`
+  / `find` / `shot` shipped; the **effect-witness** promotes a plain digit press
+  to **verified** (`value:0 → value:789`) by reading a settled, window-scoped
+  sibling readout — causally fenced (stability gate, exactly-one-change,
+  structural keys) so it never over-claims. Done: live-verified on a backgrounded
+  Calculator + 69 hermetic tests. (M5 backlog: bound AX calls — `searchElements`
+  can hang on a degraded AX subsystem.)
 - **M3 — More actions** *(Layer 1).* `type` (AX set-value, verify the value
   changed — never the old keystroke no-op), `doubleclick`, `set-value` for
   checkbox/slider/dropdown, the named AX actions, and record/replay.

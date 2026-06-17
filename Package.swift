@@ -26,7 +26,13 @@ let package = Package(
             dependencies: [
                 .product(name: "AXorcist", package: "AXorcist"),
             ],
-            path: "Sources/GhostHandsKit"),
+            path: "Sources/GhostHandsKit",
+            linkerSettings: [
+                // `shot` captures via ScreenCaptureKit (macOS 14+); CoreGraphics
+                // /ImageIO come transitively, but the SCK framework is linked
+                // explicitly so the capture symbols resolve.
+                .linkedFramework("ScreenCaptureKit"),
+            ]),
 
         // The CLI: `ghosthands click "<name>" <app>` — hand-rolled arg parse.
         .executableTarget(
