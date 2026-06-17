@@ -6,14 +6,16 @@ The *why* and *how*. State + roadmap live in [ROADMAP.md](./ROADMAP.md); rules i
 
 ## The product thesis
 
-A model-agnostic, local macOS computer-use tool whose two non-negotiables are
+A local macOS computer-use **tool** whose two non-negotiables are
 **invisibility** (acts on background windows; never steals the cursor or focus)
 and **honesty** (never claims an effect it can't observe). Everything else —
-more verbs, the brain, the phone bridge — is built on those two.
+more verbs, the read tier, the pluggable interface — is built on those two.
 
-The endgame: **anything on the Mac screen is agent-interactable, triggered from
-your phone**, with every step world-verified. See ROADMAP's capability matrix
-(target: every row ✅).
+The endgame: **anything on the Mac screen is drivable by any agent that plugs
+in** (via MCP server / CLI / Swift library), with every step world-verified.
+This tool is the **hands + eyes**; the **brain, and any phone / remote trigger,
+are out of scope** — whoever plugs in brings those. See ROADMAP's capability
+matrix (target: every row ✅).
 
 ## Why AXorcist, not cua-driver
 
@@ -31,13 +33,14 @@ added — and AXorcist's open Swift makes that clean to bake in.
   contract. Pure logic (name scoring, resolution, verdict) is split from the AX
   bridge so it is unit-testable without a live app.
 - **CLI** (`ghosthands`) = the verbs + honest exit codes.
-- **Future:** a long-lived daemon + `AXObserver` push-events (M5), a
-  goal-seeking brain (M6, model-agnostic — local model is a plugin off the hot
-  path), and the remote phone bridge + auth (M7).
+- **Endgame (M5):** the whole verb surface exposed as an **MCP server** (+ the
+  CLI + a Swift library) so **any agent** can plug in and drive the Mac, backed
+  by a long-lived daemon + `AXObserver` push-events (react, don't poll).
+- **Out of scope:** the brain / goal-planner, the phone or any remote trigger,
+  and auth for remote control — George owns those and brings his own agent.
 
-The seam stays Swift end-to-end; collapsing to one language unlocks event-driven
-(not poll-based) automation, a single TCC identity, one daemon, and streaming
-results to a phone — things a two-process seam can't give.
+Staying Swift end-to-end unlocks event-driven (not poll-based) automation, a
+single TCC identity, and one daemon — things a two-process seam can't give.
 
 ## The honesty model
 
@@ -77,4 +80,4 @@ A pixel/synthetic click needs the window foreground + moves the cursor + can lan
 on the wrong thing. An **AX action** addresses the control directly, works on a
 backgrounded/occluded window, steals no focus, and moves nothing on screen. That
 is the entire reason this can run while you keep using your Mac — and the reason
-it can eventually run from your phone without hijacking the machine.
+any agent can plug in and drive it without hijacking the machine.

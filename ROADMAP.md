@@ -5,9 +5,14 @@ move, no focus steal) through the Accessibility tree, and is **honest** — it
 proves the effect, says "pressed but unproven", or refuses; it never fakes
 success.
 
-**North star:** GhostHands-native should eventually do **everything** in the
-capability matrix below — every row a ✅ — and be controllable **from your
-phone**. This file is the single handoff doc; read it first in a new session.
+**North star:** a COMPLETE, honest, invisible macOS computer-use **tool that any
+agent can plug into and drive the whole Mac** — every row of the capability
+matrix below a ✅. This tool is the **hands + eyes**, exposed as a clean
+interface (MCP server / CLI / Swift library). The **brain, the phone, and
+"text-it-a-task" are OUT OF SCOPE** — George owns those and plugs in whatever
+agent he wants; this tool just lets that agent *do anything on screen*,
+invisibly and honestly. This file is the single handoff doc; read it first in a
+new session.
 
 ---
 
@@ -68,14 +73,17 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Multi-monitor + window identity/management | ❌ | ✅ | ❌ | ✅ | M4 |
 | Web tier (tabs / bookmarks / read page) | ✅(cua) | ✅ | ❌ | ✅ | M4 |
 | Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | M5 |
-| Brain: goal → plan → act → verify (model-agnostic) | ✅(local) | ✅ | ❌ | ✅ | M6 |
-| **Phone bridge: text from phone → runs on Mac + auth** | ❌ | ❌ | ❌ | ✅ | **M7** |
+| **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ❌ | ✅ | **M5** |
 
 `~` = partial. The TARGET column is all ✅ on purpose — that's the goal.
 
+**Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
+the phone ingress, "text-it-a-task", auth for remote control. This tool is the
+hands + eyes; whoever plugs in brings the brain.
+
 ---
 
-## Milestones to fill every checkmark (mapped to the 4-layer vision)
+## Milestones to fill every checkmark (M2–M5 — the complete tool)
 
 - **M2 — Read + Prove** *(Layer 1 read + Layer 2 honesty finisher).* Bring back
   `snapshot` / `find` / `shot`. Add the **effect-witness**: after a press, read a
@@ -88,18 +96,18 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 - **M4 — Hard surfaces** *(Layer 1, the credibility 20%).* Menu bar / Control
   Center, drag-and-drop (the "install an app" demo — prefer `cp -R` over GUI
   drag when possible), multi-monitor + window management, web tier.
-- **M5 — Always-on** *(Layer 2).* Long-lived daemon + `AXObserver` push-events
-  (react the instant a dialog appears) + lifecycle/auto-heal. One TCC identity.
-- **M6 — Brain** *(Layer 3).* Goal-seeking loop, model-agnostic (cloud Claude by
-  default; local model = a plugin off the action hot path), prefer-reliable-path
-  planning (filesystem/`defaults`/AX before GUI mimicry).
-- **M7 — Phone bridge** *(Layer 4, the dream).* Remote ingress (phone → Mac),
-  auth/gating (token, allowlist, confirm-before-destructive, audit log), result
-  streaming back. "Text it a task, it runs on your Mac."
+- **M5 — Pluggable + always-on (the endgame).** Expose the whole verb surface as
+  an **MCP server** (plus the CLI + a Swift library) so **any agent** — Claude, a
+  phone agent, anything — can plug in and drive the Mac. Long-lived daemon +
+  `AXObserver` push-events (react the instant a dialog appears) + lifecycle /
+  auto-heal. One TCC identity. After M5 this is a complete, honest, invisible
+  macOS computer-use tool, ready for any brain to use.
 
-North-star demo for "done": from your phone, *"install Rectangle"* → download
-DMG → mount → handle the license dialog → install → eject → launch → confirm
-running — every step world-verified.
+**Done** = every capability-matrix row ✅: an agent plugged into the MCP can
+drive *anything on screen* — read it, click it, type it, toggle it, drag it,
+across monitors and menus — invisibly and honestly. E.g. an agent installs
+Rectangle end-to-end (DMG → dialog → install → launch → verified) with zero focus
+theft. The agent/brain doing the driving is George's, not this tool's.
 
 ---
 

@@ -10,6 +10,12 @@ named control through the Accessibility tree — **no cursor move, no focus
 steal** — and reports the **honest** result. The whole product thesis is
 honesty + invisibility; everything else is a feature on top.
 
+**This is a TOOL, not an agent.** It is the hands + eyes that ANY agent plugs
+into — via an MCP server / CLI / Swift library — to drive the whole Mac. The
+brain, the phone, "text-it-a-task", remote auth → **out of scope**; George owns
+those and brings his own agent. Your job: make this tool able to do *anything on
+screen*, invisibly and honestly, for whatever brain is driving.
+
 ## Prime directive — honesty
 
 **Never report success you cannot prove.** Every action resolves to one of:
@@ -77,27 +83,37 @@ swift test                                     # hermetic
   terminal already holds the grant on the dev machine.
 - AXorcist source to read its real API: `.build/checkouts/AXorcist/Sources/AXorcist/`.
 
-## Stop and ask the human — real forks (do NOT bulldoze)
+## Full autonomy — churn, don't ask
 
-Churn M2–M3 autonomously. **Stop and ask** at:
-- **M4** hard surfaces (menu bar / drag / multi-monitor — private-API design),
-- **M5** daemon (TCC / code-signing / launchd),
-- **M6** brain (model choice),
-- **M7** phone bridge (**security + outward-facing — never stand up remote
-  computer-control without explicit approval**),
-- anything irreversible, outward-facing, or a genuine architecture fork.
+Work all milestones (M2 → M5) start to finish **without stopping to ask**. Make
+every technical call yourself — design, dependencies, code-signing, the MCP
+shape, all of it. Use the computer freely to build and verify (launch/drive
+apps, install/remove *test* apps to exercise drag-and-drop, etc.). Decide → do →
+verify → move on. The only limits are the rails below — quality guarantees, not
+questions:
+- honesty + invisibility (the product),
+- hermetic tests,
+- don't destroy George's real data/work/files (drive apps freely; just don't
+  trash his actual stuff),
+- no AI/Claude/Anthropic attribution in git artifacts.
+
+Everything else: just work. Don't stop until the ROADMAP is all ✅.
 
 ## Resume (next session)
 
 Run this as a `/loop` prompt — it is both the mission and the loop body:
 
-> Continue GhostHands-native. Read AGENTS.md + ROADMAP.md. Churn milestones **in
-> order**. Per milestone: build → `swift build` green → `swift test` green
-> (**hermetic — never drive a live app in tests**) → **live-verify** world-checked
-> against a real *background* app (launch via cua; confirm no focus steal, no
-> cursor move) → spawn an **adversarial honesty review** → commit → push → tick
-> the ROADMAP checkbox. Hard rules per AGENTS.md (AX-only, invisible, honesty =
-> verified/dispatched/refuse, never fake success). Don't ask per step. **STOP and
-> ask** at M4+, anything outward-facing/security/irreversible, or a real fork.
-> **Start: M2** — read verbs (snapshot/find/shot) + the effect-witness so a digit
-> press verifies "0→789" instead of "unverified".
+> GOAL: make GhostHands-native a COMPLETE, honest, invisible macOS computer-use
+> tool that ANY agent can plug into (MCP / CLI / library) and drive the whole
+> Mac — every ROADMAP capability-matrix row ✅. The brain + phone are out of
+> scope (George's). Read AGENTS.md + ROADMAP.md + DESIGN.md, then **churn all
+> milestones M2 → M5 in order, fully autonomously — never stop to ask.** Per
+> milestone: build → `swift build` green → `swift test` green (**hermetic —
+> never drive a live app in tests**) → **live-verify** world-checked against a
+> real *background* app (launch via cua; confirm no focus steal, no cursor move)
+> → spawn an **adversarial honesty review** → commit → push → tick the checkbox.
+> Make every call yourself; use the computer freely to build/test. Only rails:
+> honesty + invisibility, hermetic tests, don't trash my real data, no AI
+> attribution in git. **Start: M2** — read verbs (snapshot/find/shot) + the
+> effect-witness so a digit press verifies "0→789" instead of "unverified". Don't
+> stop until the ROADMAP is all ✅.
