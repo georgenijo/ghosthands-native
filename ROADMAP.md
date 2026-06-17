@@ -129,3 +129,14 @@ running — every step world-verified.
 - Menus are excluded from `click` (frontmost-only concern) — that's M4's job.
 - AX path needs **Accessibility** permission only (no Screen Recording). The
   launching terminal already holds the grant on this machine.
+
+---
+
+## Resume (new session)
+
+The canonical operating contract + the `/loop` resume prompt live in
+**[AGENTS.md](./AGENTS.md)** (§"Resume"). Shortest path: open a fresh session and
+run it as a `/loop` prompt — *"Continue GhostHands-native per AGENTS.md +
+ROADMAP.md; churn milestones in order; start M2; stop at M4+ / outward-facing /
+forks."* The repo carries everything (this file, AGENTS, DESIGN, decisions,
+CHANGELOG) — no external context needed.
