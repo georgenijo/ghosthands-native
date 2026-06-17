@@ -3,34 +3,40 @@ import ApplicationServices
 import AXorcist
 import Foundation
 
-/// The outcome of a click — carries the world-evidence, not a bare boolean.
-/// `axAccepted` is the AX layer's own verdict (`press()` succeeded); the
-/// before/after values are read back off a FRESH element so the caller can see
-/// what actually changed rather than trusting our memory of having acted.
+/// The outcome of a click — carries world-evidence, and is honest about its
+/// strength. `axAccepted` is only that the AX layer *dispatched* the action
+/// (`press()` returned success). `verified` is the stronger claim that the
+/// world was *observed* to change — a value flip, or the target no longer
+/// matching after the press. For a plain button (no `AXValue`, still present
+/// afterwards) we can dispatch but cannot verify the effect from the element
+/// alone, and we say so rather than implying success.
 public struct ClickOutcome: Sendable, Equatable {
     public let app: String
     public let name: String
     public let role: String
     public let axAccepted: Bool
+    public let verified: Bool
+    public let evidence: String?
     public let valueBefore: String?
     public let valueAfter: String?
 
     public var valueChanged: Bool { valueBefore != valueAfter }
-    /// The honesty floor: the AX layer accepted the action. (A deeper
-    /// effect-level assertion — diff the whole tree — is M2.)
+    /// The AX layer accepted the dispatch. NOT proof of effect — see `verified`.
     public var landed: Bool { axAccepted }
 }
 
 extension GhostHands {
-    /// Press the element named `name` in `appSpec`'s UI — cursor-less, via AX,
+    /// Press the control named `name` in `appSpec`'s UI — cursor-less, via AX,
     /// no focus steal.
     ///
     /// Honesty contract (nothing here ever hardcodes success):
     /// - throws `.accessibilityNotTrusted` if AX permission is missing,
-    /// - throws `.elementNotFound` if the name isn't on screen (refuse-on-no-op),
-    /// - throws `.actionRejected` if the element refuses AXPress,
-    /// - otherwise returns the AX-accepted outcome with the element's value read
-    ///   back before/after as evidence.
+    /// - throws `.elementNotFound` if no pressable control has that name,
+    /// - throws `.ambiguousMatch` if more than one distinct control matches,
+    /// - throws `.actionRejected` if the control refuses AXPress,
+    /// - otherwise returns an outcome that is honest about whether the effect
+    ///   was *verified* (observed change) or merely *dispatched* (AX accepted,
+    ///   effect not observable from the element).
     @MainActor
     public static func click(name: String, appSpec: String,
                              settle: TimeInterval = 0.15) throws -> ClickOutcome {
@@ -39,26 +45,55 @@ extension GhostHands {
         }
 
         let target = try Target.resolve(appSpec)
-        guard let element = Finder.clickable(named: name, under: target.element) else {
+
+        let element: Element
+        let facts: ElementFacts
+        switch Finder.resolve(named: name, under: target.element) {
+        case let .element(found, foundFacts):
+            element = found
+            facts = foundFacts
+        case let .ambiguous(candidates):
+            throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }
 
-        let role = element.role() ?? "AXUnknown"
-        let before = axString(element.value())
+        let role = facts.role ?? "AXUnknown"
+        let before = facts.value
+        let identity = NameMatch.identityKey(facts)
 
         guard element.press() else {
             throw GhostHandsError.actionRejected(name: name, action: "AXPress")
         }
 
-        if settle > 0 { Thread.sleep(forTimeInterval: settle) }
-
-        // Re-resolve against a FRESH application element — the read-back must be
-        // the world, not a stale handle we already touched.
+        // Read the world back off a FRESH application element — never the stale
+        // handle we already pressed.
+        if settle > 0 { Thread.sleep(forTimeInterval: settle) }  // CLI is one-shot; main thread is free to block
         let freshRoot = Element(AXUIElementCreateApplication(target.pid))
-        let fresh = Finder.clickable(named: name, under: freshRoot) ?? element
-        let after = axString(fresh.value())
+
+        let after: String?
+        let gone: Bool
+        if let fresh = Finder.refind(identity: identity, named: name, under: freshRoot) {
+            after = axString(fresh.value())
+            gone = false
+        } else {
+            after = nil
+            gone = true  // the control changed/relabelled/disappeared — itself evidence
+        }
+
+        let valueChanged = before != after
+        let verified = valueChanged || gone
+        let evidence: String?
+        if valueChanged {
+            evidence = "value \(before ?? "nil") → \(after ?? "nil")"
+        } else if gone {
+            evidence = "target no longer present after press"
+        } else {
+            evidence = nil
+        }
 
         return ClickOutcome(app: target.name, name: name, role: role,
-                            axAccepted: true, valueBefore: before, valueAfter: after)
+                            axAccepted: true, verified: verified, evidence: evidence,
+                            valueBefore: before, valueAfter: after)
     }
 }

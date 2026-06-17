@@ -31,23 +31,26 @@ struct GhostHandsCLI {
         let appSpec = rest[1]
         do {
             let outcome = try GhostHands.click(name: name, appSpec: appSpec)
-            print("clicked \(name.debugDescription) (role=\(outcome.role)) "
-                + "in \(outcome.app) — AX accepted\(deltaText(outcome))")
-        } catch {
+            print(report(outcome, name: name))
+        } catch let error as GhostHandsError {
             FileHandle.standardError.write(Data("click failed: \(error)\n".utf8))
+            exit(1)
+        } catch {
+            // No other throw site today, but never leak a raw reflection.
+            FileHandle.standardError.write(Data("click failed: unexpected error\n".utf8))
             exit(1)
         }
     }
 
-    /// World-evidence suffix: what the element's value did across the action.
-    static func deltaText(_ o: ClickOutcome) -> String {
-        if o.valueChanged {
-            return " — value \(o.valueBefore ?? "nil") → \(o.valueAfter ?? "nil")"
+    /// Honest one-liner: distinguishes a VERIFIED effect (observed change) from
+    /// a mere DISPATCH (AX accepted, effect not observable from the element).
+    static func report(_ o: ClickOutcome, name: String) -> String {
+        let where_ = "(role=\(o.role)) in \(o.app)"
+        if o.verified {
+            return "clicked \(name.debugDescription) \(where_) — verified: \(o.evidence ?? "changed")"
         }
-        if let after = o.valueAfter, !after.isEmpty {
-            return " — value \(after) (unchanged)"
-        }
-        return ""
+        return "pressed \(name.debugDescription) \(where_) — AXPress accepted; "
+            + "no observable change (effect unverified)"
     }
 
     static func usage() -> Never {

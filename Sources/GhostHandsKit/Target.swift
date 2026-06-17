@@ -34,17 +34,23 @@ public struct Target {
         }
 
         let lowered = spec.lowercased()
-        let exact = apps.first { app in
+        if let exact = apps.first(where: { app in
             app.bundleIdentifier?.lowercased() == lowered
                 || app.localizedName?.lowercased() == lowered
+        }) {
+            return Target(app: exact)
         }
-        let partial = apps.first { app in
+
+        // No exact hit — accept a partial match only if it is UNAMBIGUOUS.
+        let partial = apps.filter { app in
             (app.bundleIdentifier?.lowercased().contains(lowered) ?? false)
                 || (app.localizedName?.lowercased().contains(lowered) ?? false)
         }
-        guard let hit = exact ?? partial else {
-            throw GhostHandsError.appNotFound(spec)
+        guard !partial.isEmpty else { throw GhostHandsError.appNotFound(spec) }
+        let names = Set(partial.compactMap { $0.localizedName ?? $0.bundleIdentifier })
+        if names.count > 1 {
+            throw GhostHandsError.appAmbiguous(spec: spec, candidates: names.sorted())
         }
-        return Target(app: hit)
+        return Target(app: partial[0])
     }
 }
