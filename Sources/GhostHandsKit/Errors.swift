@@ -130,6 +130,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than post a wheel into the void (the scroll tier's honesty
     /// boundary: nothing to move, nothing to witness).
     case noScrollArea(app: String, named: String?)
+    /// `dialog` found no modal sheet / alert / dialog in the app to detect or
+    /// respond to. We REFUSE rather than fabricate a popup — there is nothing to
+    /// read and nothing to dismiss (the dialog tier's honesty boundary).
+    case noDialog(app: String)
 
     public var description: String {
         switch self {
@@ -251,6 +255,9 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             }
             return "no scroll area found in \(app)'s frontmost window — refusing to "
                 + "scroll (the window exposes no AXScrollArea to move)"
+        case let .noDialog(app):
+            return "no modal sheet / alert / dialog found in \(app) — refusing to "
+                + "fabricate a popup (nothing to detect or dismiss)"
         }
     }
 }
