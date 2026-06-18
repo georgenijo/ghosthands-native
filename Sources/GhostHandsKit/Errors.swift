@@ -71,6 +71,18 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     case destinationExists(path: String)
     /// `cp -R` returned nonzero — the copy did not complete.
     case copyFailed(reason: String)
+    /// A `window` verb had more than one candidate window and no `--window`
+    /// selector (or a selector that matched >1) — REFUSE rather than mutate an
+    /// arbitrary window. Mirrors `.ambiguousMatch` for controls.
+    case windowAmbiguous(app: String, candidates: [String])
+    /// A `window --window <id|title>` selector matched NO window — REFUSE rather
+    /// than fall back to an arbitrary window.
+    case windowNotFound(app: String, selector: String)
+    /// The AX window-list ENUMERATION itself failed (`windows()` returned nil — the
+    /// AXWindows attribute could not be read), as distinct from an app that has
+    /// zero windows. We REFUSE rather than report "no windows" and mislead the
+    /// caller into thinking the app is windowless when AX actually errored.
+    case windowListUnreadable(app: String)
 
     public var description: String {
         switch self {
@@ -142,6 +154,17 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "overwrite an installed app (pass --force to replace it)"
         case let .copyFailed(reason):
             return "copy failed: \(reason)"
+        case let .windowAmbiguous(app, candidates):
+            return "\(app) has \(candidates.count) windows "
+                + "(\(candidates.joined(separator: ", "))) — pass --window <id|title> "
+                + "to pick one (refusing to mutate an arbitrary window)"
+        case let .windowNotFound(app, selector):
+            return "no window matching \(selector) in \(app) — "
+                + "refusing to fall back to an arbitrary window"
+        case let .windowListUnreadable(app):
+            return "could not read the window list of \(app) — the AXWindows "
+                + "attribute returned an error (this is an AX read failure, NOT a "
+                + "windowless app; refusing to report 'no windows')"
         }
     }
 }
