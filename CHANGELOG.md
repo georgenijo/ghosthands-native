@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.8.0-m4 — 2026-06-18 (overnight build)
+
+The big completeness push — a production-grade, honest, invisible computer-use +
+UI-testing surface. Every capability-matrix row is now ✅ except the two George
+explicitly deferred (menu bar; always-on daemon). Built across ~16 worktree-isolated
+implement→review→fix workflows, integrated serially, each honesty-reviewed and
+live-verified where the environment allowed. 325 → **657 hermetic tests**.
+
+**Web / DOM (CDP tier — 4 slices, additive beside AX, loopback-only):**
+- **`web read --cdp` / `web tabs --cdp`** — connect to an already-open DevTools port
+  and read the page (incl. **background tabs** AX can't see); `auto` lens prefers CDP
+  when a port is reachable and falls back to AX silently, `--ax` forces AX, forced
+  `--cdp` on a closed port refuses (`cdpPortClosed`). Hand-rolled CDP over
+  `URLSessionWebSocketTask` (no new dep): pure `/json/list` decode + loopback guard +
+  id-match/event-skip classifier + a deadline-bounded session.
+- **`web click <selector>` / `web fill <selector> <text>`** — DOM-selector actuation
+  with the agent-browser-mined **occlusion "covered-by" refuse** (never click through
+  an overlay); click verified by navigation, fill by value read-back.
+- **`web html <selector>`** (outerHTML + attributes + computed style) and **`web eval
+  <js>`** (a page-side throw surfaces as a refuse, never a fake success).
+- **`--relaunch`** — consent-gated isolated relaunch: when a port is closed, launch a
+  throwaway instance with an ephemeral port + a fresh temp profile (never the real
+  profile), reading the chosen port from the `DevToolsActivePort` sidecar. Default
+  (no flag) is the unchanged refuse; never silent.
+
+**Native verbs:** `focus` (+ auto-focus-on-type) · `right-click` (AXShowMenu/pixel,
+menu-appeared witness) · `scroll` (AXScrollBar witness) · `drag <from> <to>` (witnessed
+by the source moving) · `extract` (AXTable/AXOutline/AXList → TSV rows) · `dialog`
+(detect a modal + `--click` a button, witnessed by dismissal).
+
+**Testing + interface:** `wait` (deterministic poll to a hard deadline, no magic
+sleeps) · `assert`/`expect` (exists/absent/value/count — PASS 0 / FAIL 1 / refuse 2) ·
+locator disambiguators **`--nth` / `--role` / `--text`** (the no-flag refuse-on-ambiguous
+is unchanged) · **`--json`** result envelope on *every* verb (stable
+`{verb,status,evidence,fields,error}`; status mirrors the human verdict, exit codes
+identical, default output unchanged) · **full MCP surface** (8 → **31 tools**, results
+reuse the JSON envelope, refuse → `isError`) · `clipboard read/write` · **opt-in failure
+artifacts** (`GHOSTHANDS_ARTIFACTS=<dir>` → screenshot + JSONL log on a refuse, never
+changes an exit code).
+
+**Fixed — a latent cyclic-AX-tree bug class (since M1), three parts, caught only by
+live-verify (hermetic trees don't cycle):**
+- **SIGSEGV** — AXorcist's `searchElements` honors `maxDepth` only when > 0; left at 0
+  (unbounded), a cyclic AX subtree (macOS 26 exposes them) recursed until the stack
+  overflowed (exit 139) on the not-found walk of *every* resolve verb. Bounded to 100.
+- **Hang** — even depth-bounded, AXorcist's search has no visited-set, so a
+  high-branching cycle re-walks `branching^depth` → an effective hang (`extract` hung;
+  `find` measured ~50 s). Added **`Finder.descendants`** (depth cap + `Set<Element>`
+  visited, the Snapshot/Web pattern) and routed the **shared** resolve path
+  (`candidateMatches` / `presenceMatches` / `Find`) + extract/scroll through it, using
+  AXorcist's own per-node `matches()` so the candidate set is unchanged. **`find` 50 s
+  → 0.8 s.** This also satisfies the bounded/degraded-AX guard goal.
+
 ## 0.7.0-m4 — 2026-06-18
 
 Browser-task completeness — the three verbs that close the gaps a live

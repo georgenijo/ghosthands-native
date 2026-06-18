@@ -68,17 +68,37 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ✅ | ✅ | done (M3) |
 | Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ✅ | ✅ | done (M3) |
 | record / replay a flow (no model) | ✅ | ❌ | ✅ | ✅ | done (M3 pass-2) |
-| Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
+| Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | DEFERRED (hard: MenuBarExtra AXPress no-op) |
 | Install app (DMG → Applications, cp -R + verify bundle) | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Multi-monitor + window identity/management | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Web tier (read page, with element frames) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |
-| Web tier (tabs / bookmarks) | ✅(cua) | ✅ | ~(no AXTabGroup) | ✅ | M4 (CDP = future) |
+| Web tier (tabs / bookmarks) | ✅(cua) | ✅ | ✅(CDP incl. background tabs) | ✅ | done (overnight, CDP S1) |
 | Navigate to a URL (verify page changed) | ✅(cua) | ✅ | ✅ | ✅ | done (M4) |
 | Press keys / hotkeys (Enter / Tab / chords) | ✅(cua) | ✅ | ✅(dispatched) | ✅ | done (M4) |
-| Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | M5 |
-| **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ✅ | ✅ | **done (M5 scaffold)** |
+| Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | DEFERRED (issue #2 — needs design) |
+| **Pluggable interface (MCP server) — any agent can drive it (FULL 31-tool surface)** | ❌ | ✅ | ✅ | ✅ | **done (M5)** |
+| Web selector click / fill (CDP) + occlusion "covered-by" refuse | ✅(cua) | ✅ | ✅ | ✅ | done (overnight, CDP S2) |
+| Web DOM read — outerHTML / computed / attrs + JS eval (CDP) | ❌ | ~ | ✅ | ✅ | done (overnight, CDP S3) |
+| Web consent-gated isolated relaunch (ephemeral port + sidecar) | ✅(cua) | ✅ | ✅ | ✅ | done (overnight, CDP S4) |
+| Keyboard focus (focus verb + auto-focus-on-type) | ❌ | ~ | ✅ | ✅ | done (overnight) |
+| Right-click / context menu (menu-appeared witness) | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| Scroll within scroll-areas/lists (position witness) | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| Drag element → element (witnessed) | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| Extract table/outline/list as structured rows ("collect anything") | ❌ | ~ | ✅ | ✅ | done (overnight) |
+| Detect + respond to a modal sheet / alert / dialog | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| Deterministic wait / poll (exists / gone, hard deadline) | ❌ | ❌ | ✅ | ✅ | done (overnight) |
+| Assert / expect verbs (exists/absent/value/count, exit codes) | ❌ | ❌ | ✅ | ✅ | done (overnight) |
+| Clipboard read / write (read-back verify) | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| Locator disambiguators (--nth / --role / --text) | ❌ | ✅ | ✅ | ✅ | done (overnight) |
+| --json result envelope on every verb (stable schema) | ❌ | ~ | ✅ | ✅ | done (overnight) |
+| Opt-in failure artifacts (screenshot + JSONL log on refuse) | ❌ | ❌ | ✅ | ✅ | done (overnight) |
+| Cycle-safe / bounded AX (no SIGSEGV/hang on macOS-26 cyclic trees) | ~ | ❌ | ✅ | ✅ | done (overnight) |
 
-`~` = partial. The TARGET column is all ✅ on purpose — that's the goal.
+`~` = partial. The TARGET column is all ✅ on purpose — that's the goal. Every row is
+now ✅ **except** the two George explicitly deferred — menu bar / Control Center (hard,
+MenuBarExtra AXPress is a no-op) and the always-on daemon (issue #2, needs a design
+discussion). The other deferred forks: vision/OCR (#1), UI-test flow-runner (#3),
+packaging/notarization (#4).
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
