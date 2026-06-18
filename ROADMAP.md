@@ -67,13 +67,13 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Double-click / open files / NSOpenPanel dialogs | ✅ | ✅ | ✅ | ✅ | done (M3) |
 | Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ✅ | ✅ | done (M3) |
 | Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ✅ | ✅ | done (M3) |
-| record / replay a flow (no model) | ✅ | ❌ | ❌ | ✅ | M3 (pass-2) |
+| record / replay a flow (no model) | ✅ | ❌ | ✅ | ✅ | done (M3 pass-2) |
 | Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
 | Drag-and-drop (install app: DMG → Applications) | ❌ | ✅ | ❌ | ✅ | M4 |
 | Multi-monitor + window identity/management | ❌ | ✅ | ❌ | ✅ | M4 |
-| Web tier (tabs / bookmarks / read page) | ✅(cua) | ✅ | ❌ | ✅ | M4 |
+| Web tier (tabs / bookmarks / read page) | ✅(cua) | ✅ | ~(AX-only) | ✅ | M4 (CDP = future) |
 | Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | M5 |
-| **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ❌ | ✅ | **M5** |
+| **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ✅ | ✅ | **done (M5 scaffold)** |
 
 `~` = partial. The TARGET column is all ✅ on purpose — that's the goal.
 

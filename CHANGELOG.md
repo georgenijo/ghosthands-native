@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.0-m4 — 2026-06-18
+
+Four tiers built in parallel (isolated worktrees, merged into one tree): a
+pluggable MCP server, record/replay, pixel actuation, and a web read tier. Two
+land fully; two are honest-but-limited and labelled as such — never sold as more
+than they are.
+
+**Added**
+- **MCP server** (`ghosthands-mcp`) — a stdio JSON-RPC 2.0 server exposing the
+  eight verbs (`click/type/set_value/doubleclick/act/snapshot/find/shot`) as MCP
+  tools, so **any agent — a local model, Claude, a phone agent — can plug in and
+  drive the Mac**. `initialize` / `tools/list` / `tools/call`; outcomes map
+  faithfully (verified vs dispatched-unverified carried through; a thrown
+  `GhostHandsError` becomes an `isError` result with the honest message — the
+  wrapper never collapses a refuse or an unverified into success). *Live-verified*
+  over stdio: `tools/call click` on a missing element returns `isError` with
+  "no element named …", `find` returns a real result.
+- **record / replay** (`ghosthands record` / `replay`) — a deterministic JSON
+  flow of verb steps. `replay` runs each step via the real verbs with an honest
+  per-step verdict (verified / dispatched-unverified / REFUSED), **stops on the
+  first refuse** (the world diverged) unless `--keep-going`, and exits non-zero if
+  any step refused; unverified steps are counted, never passed off as success.
+  `record` executes a verb and appends it only if it didn't refuse. *Live-verified*
+  on a backgrounded Calculator: record→replay of a digit press, each step
+  `verified` by the display witness, honest summary.
+- **pixel `click-at` / `drag`** — coordinate actuation for no-AX surfaces, posted
+  to the target pid (`CGEventPostToPid`), verified by a before/after
+  **screenshot-diff** of the click region (verified only on an observed pixel
+  change; else dispatched-unverified; out-of-window point → refuse).
+- **web read tier** (`ghosthands web read` / `tabs`) — a chrome-stripped
+  web-scoped digest of a browser's `AXWebArea` page subtree + tab list, AX-only,
+  reading only what's on the tree (never fabricated).
+
+**Known limitations (surfaced, not hidden)**
+- **pixel actuation does not reach a *backgrounded* window.** `CGEventPostToPid`
+  was *live-tested* on a backgrounded Calculator: the event dispatched but the app
+  did not process it (display unchanged), and `click-at` honestly reported
+  "no observable pixel change (effect unverified)" — it never faked the click. So
+  the pixel tier is useful for the **foreground / focused** no-AX surface, and is
+  honest (not a false success) when a background poke doesn't take. Reliable
+  background pixel actuation would need the visible HID-tap path (breaks
+  invisibility) — deferred.
+- **web tier is inert on Chromium.** *Live-tested* on Brave: no `AXWebArea` /
+  `AXTabGroup` is exposed on the AX tree (Chrome/Brave don't publish web a11y by
+  default), so `web read` honestly reports "browser chrome only; nothing to read"
+  and `web tabs` refuses rather than guess. The tier works where the browser
+  exposes web AX (Safari, or Chromium with accessibility forced on); a CDP/DOM
+  path (as the old Python build used) is the real fix — future work. The digest /
+  chrome-strip / tab logic is hermetically tested on fabricated trees.
+
+**Tests:** 211 hermetic total (+91 across the four tiers); each tier passed an
+adversarial honesty review inside its workflow. The integration was merged on
+`main` (build + 211 tests green) and the four verbs above were live-verified /
+honestly-bounded as noted before push.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.3.0-m3 — 2026-06-18
 
 More actions. Four mutating verbs on one shared honesty core — every one proves
