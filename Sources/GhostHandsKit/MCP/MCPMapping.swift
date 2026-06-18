@@ -34,6 +34,88 @@ public enum MCPMapping {
         result(text: error.description, isError: true)
     }
 
+    // MARK: - The JSONResult envelope bridge (the SAME envelope the CLI emits)
+
+    /// Map a `JSONResult` envelope — the EXACT machine-readable verdict the CLI
+    /// `--json` mode emits, built by the `JSONShape.from*` shapers off an already-
+    /// decided outcome — into an MCP tool result. This is the ONE place the new
+    /// verb surface crosses the honesty boundary, and it re-uses the CLI's own
+    /// shapers so the MCP verdict can NEVER claim more than the CLI's:
+    ///
+    ///   • `status == .refused`  → isError:true (a refuse is a refuse — the SAME
+    ///     thrown-error message the human stderr line carries; NEVER a fake ok).
+    ///   • every other status (`verified`/`dispatched`/`pass`/`fail`/`ok`) →
+    ///     isError:false, with the full envelope carried as `structuredContent`
+    ///     (so a programmatic brain reads `status`/`evidence` directly) and a
+    ///     human one-liner as the text content. A `dispatched` stays dispatched,
+    ///     a `fail` stays fail — the text mirrors the status verbatim, never
+    ///     upgraded.
+    ///
+    /// Note a `.fail` (an assert that was CHECKED and did not hold) is NOT an
+    /// isError: the assertion was answered honestly. Only a `.refused` (the
+    /// assertion could not be checked) is an isError — exactly the CLI's split
+    /// between exit 1 (fail) and exit 2 (refuse).
+    public static func fromEnvelope(_ env: JSONResult) -> JSONValue {
+        let structured = jsonValue(from: envelopeObject(env))
+        if env.status == .refused {
+            // The refuse text is the SAME message the human stderr line prints.
+            return result(text: env.error ?? "refused", isError: true, structured: structured)
+        }
+        return result(text: envelopeText(env), isError: false, structured: structured)
+    }
+
+    /// A human one-liner for a non-refused envelope — names the verb, status, and
+    /// the OBSERVED evidence/value when present. It mirrors the envelope's status
+    /// verbatim (a `dispatched` says "dispatched", a `fail` says "fail") so the
+    /// text never claims more than the structured verdict.
+    static func envelopeText(_ env: JSONResult) -> String {
+        var parts = ["\(env.verb): \(env.status.rawValue)"]
+        if let app = env.app { parts.append("in \(app)") }
+        if let target = env.target { parts.append("— \(target)") }
+        if let evidence = env.evidence { parts.append("(\(evidence))") }
+        else if let value = env.value { parts.append("= \(value.debugDescription)") }
+        return parts.joined(separator: " ")
+    }
+
+    /// Re-build the JSONResult's stable ordered object (verb/status/app/target/
+    /// evidence/value/fields/error) as the SAME `GHJSONValue` tree the `--json`
+    /// encoder serialises — so the MCP `structuredContent` is byte-equivalent to
+    /// the CLI envelope. Reuses the envelope's own optional-omission rules (a nil
+    /// field is absent, never a fabricated null).
+    static func envelopeObject(_ env: JSONResult) -> GHJSONValue {
+        var pairs: [(key: String, value: GHJSONValue)] = [
+            ("verb", .string(env.verb)),
+            ("status", .string(env.status.rawValue)),
+        ]
+        if let app = env.app { pairs.append(("app", .string(app))) }
+        if let target = env.target { pairs.append(("target", .string(target))) }
+        if let evidence = env.evidence { pairs.append(("evidence", .string(evidence))) }
+        if let value = env.value { pairs.append(("value", .string(value))) }
+        pairs.append(("fields", .object(env.fields)))
+        if let error = env.error { pairs.append(("error", .string(error))) }
+        return .object(pairs)
+    }
+
+    /// Lower a `GHJSONValue` (the JSONResult fields model) into a `JSONValue` (the
+    /// MCP protocol model) so the envelope can ride in `structuredContent`. A pure
+    /// 1:1 structural map — object key order is not load-bearing in
+    /// `structuredContent` (the MCP serialiser sorts keys), but every value is
+    /// preserved exactly.
+    static func jsonValue(from g: GHJSONValue) -> JSONValue {
+        switch g {
+        case let .string(s): return .string(s)
+        case let .int(n): return .number(Double(n))
+        case let .double(d): return .number(d)
+        case let .bool(b): return .bool(b)
+        case .null: return .null
+        case let .array(items): return .array(items.map { jsonValue(from: $0) })
+        case let .object(pairs):
+            var obj: [String: JSONValue] = [:]
+            for (k, v) in pairs { obj[k] = jsonValue(from: v) }
+            return .object(obj)
+        }
+    }
+
     /// A tool-call error that is NOT a GhostHands REFUSE — e.g. a missing
     /// required argument. Still surfaced as an isError:true tool result (so the
     /// model can recover) rather than a JSON-RPC protocol error.
