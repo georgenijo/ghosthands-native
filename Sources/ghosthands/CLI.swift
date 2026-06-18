@@ -46,6 +46,8 @@ struct GhostHandsCLI {
             runWindow(Array(args.dropFirst()))
         case "snapshot":
             runSnapshot(Array(args.dropFirst()))
+        case "extract":
+            runExtract(Array(args.dropFirst()))
         case "find":
             runFind(Array(args.dropFirst()))
         case "shot":
@@ -659,6 +661,43 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - extract
+
+    @MainActor
+    static func runExtract(_ rest: [String]) {
+        // Accept flags in any order: `--in <name>` (consumes the next token); the
+        // first leftover positional is the app spec. Mirrors the scroll `--in` loop.
+        var appSpec: String?
+        var container: String?
+        var i = 0
+        while i < rest.count {
+            if rest[i] == "--in", i + 1 < rest.count {
+                container = rest[i + 1]
+                i += 2
+            } else {
+                if appSpec == nil { appSpec = rest[i] }
+                i += 1
+            }
+        }
+        guard let appSpec else { usage() }
+        do {
+            let result = try GhostHands.extract(appSpec: appSpec, container: container)
+            let body = TableRender.render(result.model)
+            if !body.isEmpty { print(body) }
+            // Honest footer to stderr: the row count (header excluded), the
+            // container read, and whether a header was present. A present-but-empty
+            // table reports 0 rows here — honest empty, never a refuse.
+            let head = result.model.header != nil ? " (with header)" : ""
+            let note = "— \(result.rowCount) row(s) from \(result.container.debugDescription) "
+                + "in \(result.app)\(head)\n"
+            FileHandle.standardError.write(Data(note.utf8))
+        } catch let error as GhostHandsError {
+            fail("extract", error)
+        } catch {
+            failUnexpected("extract")
+        }
+    }
+
     // MARK: - find
 
     @MainActor
@@ -1086,6 +1125,7 @@ struct GhostHandsCLI {
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
+          ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
           ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands web click "<selector>" <browser> [--cdp|--debug-port N]        click a CSS-selected element (CDP-only), verified by navigation
@@ -1117,6 +1157,8 @@ struct GhostHandsCLI {
           ghosthands act increment "Volume" "System Settings"
           ghosthands focus "Search" Safari
           ghosthands snapshot Calculator --json
+          ghosthands extract "System Information"
+          ghosthands extract Mail --in "Messages"
           ghosthands web read Brave
           ghosthands web tabs Chrome
           ghosthands web click "#submit" Brave
@@ -1207,6 +1249,15 @@ struct GhostHandsCLI {
             (we use the raw raise, not focusWindow/showWindow). A rejected raise REFUSES.
           - window move/resize/raise REFUSE when the app has >1 window and no --window
             selector (mirroring click's ambiguous refuse), rather than mutate window[0].
+          - extract reads ONE tabular container (an AXTable/AXOutline/AXList) into clean
+            TSV rows — header first when the table advertises AXColumns with titles. It
+            resolves a NAMED container (--in <name>, refusing on an ambiguous match like
+            click) else the FIRST/primary table in the frontmost window, and REFUSES
+            (noTabularData) when none is found. HONESTY: it emits ONLY the cell values AX
+            exposes — a cell with no readable value is BLANK, never guessed — and a
+            present-but-EMPTY table (0 AXRow children) is honest EMPTY output (0 rows),
+            distinct from a MISSING table (a refuse). It is a pure read: no press, no
+            focus steal.
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
           - click-at / drag are the PIXEL tier (no AX element; coords from the caller).
