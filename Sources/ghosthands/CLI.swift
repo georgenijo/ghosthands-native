@@ -50,6 +50,8 @@ struct GhostHandsCLI {
             await runClickAt(Array(args.dropFirst()))
         case "drag":
             await runDrag(Array(args.dropFirst()))
+        case "scroll":
+            runScroll(Array(args.dropFirst()))
         case "key":
             runKey(Array(args.dropFirst()))
         case "install":
@@ -624,6 +626,88 @@ struct GhostHandsCLI {
         fail(verb, .badCoordinate(raw))
     }
 
+    // MARK: - scroll
+
+    @MainActor
+    static func runScroll(_ rest: [String]) {
+        // Flags in any order: `--visible` (REUSE PixelFlags) and `--in <name>`
+        // (consumes the next token). The remaining positionals are
+        // <app> <direction> [amount].
+        let (mode, afterVisible) = PixelFlags.parse(rest)
+        var container: String?
+        var pos: [String] = []
+        var i = 0
+        while i < afterVisible.count {
+            if afterVisible[i] == "--in", i + 1 < afterVisible.count {
+                container = afterVisible[i + 1]
+                i += 2
+            } else {
+                pos.append(afterVisible[i])
+                i += 1
+            }
+        }
+        guard pos.count >= 2 else { usage() }
+        let appSpec = pos[0]
+        let rawDir = pos[1]
+        let rawAmount = pos.count >= 3 ? pos[2] : nil
+
+        let parsed: ScrollSpec.Parsed
+        do {
+            parsed = try ScrollSpec.parse(direction: rawDir, amount: rawAmount)
+        } catch let err as ScrollSpec.ParseError {
+            // A bad direction / amount is a USAGE error (exit 2), mirroring the
+            // unknown-key / unknown-action wiring.
+            let msg: String
+            switch err {
+            case let .badDirection(d):
+                msg = "unknown direction \(d.debugDescription) — use one of "
+                    + "\(ScrollSpec.Direction.known)"
+            case let .badAmount(a):
+                msg = "invalid amount \(a.debugDescription) — expected a positive number (pages)"
+            }
+            FileHandle.standardError.write(Data("scroll failed: \(msg)\n".utf8))
+            exit(2)
+        } catch {
+            failUnexpected("scroll")
+        }
+
+        do {
+            let outcome = try GhostHands.scroll(appSpec: appSpec, direction: parsed.direction,
+                                                amount: parsed.amount, container: container,
+                                                mode: mode)
+            print(reportScroll(outcome))
+        } catch let error as GhostHandsError {
+            fail("scroll", error)
+        } catch {
+            failUnexpected("scroll")
+        }
+    }
+
+    /// Honest one-liner for a scroll. VERIFIED quotes the observed scroll-bar
+    /// position before → after; DISPATCHED-UNVERIFIED states plainly that the
+    /// scroll was dispatched but the bar did not move (already at the boundary) or
+    /// could not be observed (no readable scroll bar) — exit 0, NEVER a success
+    /// claim. The `.visible` HID path is LABELLED so a non-invisible wheel is never
+    /// silent.
+    static func reportScroll(_ o: ScrollOutcome) -> String {
+        let tag = o.mode == .visible
+            ? " [visible HID — wheel posted via .cghidEventTap to the window under the point]"
+            : ""
+        let where_ = "\(o.direction.rawValue) in \(o.container) (\(o.app))\(tag)"
+        if o.verified {
+            let b = o.positionBefore.map { String(format: "%.2f", $0) } ?? "?"
+            let a = o.positionAfter.map { String(format: "%.2f", $0) } ?? "?"
+            return "scrolled \(where_) via \(o.via) — verified: position \(b) → \(a)"
+        }
+        if !o.observable {
+            return "scrolled \(where_) via \(o.via) — event dispatched; no readable "
+                + "scroll-bar value to confirm a move (effect unverified)"
+        }
+        let at = o.positionAfter.map { String(format: "%.2f", $0) } ?? "?"
+        return "scrolled \(where_) via \(o.via) — event dispatched; scroll position "
+            + "unchanged (\(at) — already at the boundary?) (effect unverified)"
+    }
+
     // MARK: - key
 
     @MainActor
@@ -861,6 +945,7 @@ struct GhostHandsCLI {
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
+          ghosthands scroll <app> <up|down|left|right> [amount] [--in <name>] [--visible]   scroll a list/scroll-area, verified by the scroll-bar position
           ghosthands key "<spec>" [app] [--visible]               post a keystroke/chord (e.g. return, cmd+s) — dispatched-unverified
           ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
@@ -888,6 +973,8 @@ struct GhostHandsCLI {
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
+          ghosthands scroll Safari down
+          ghosthands scroll System\\ Settings down 2 --in "Sidebar"
           ghosthands key return Safari
           ghosthands key "cmd+shift+t" Chrome
           ghosthands key return                 (no app — posts to the frontmost app)
@@ -978,6 +1065,19 @@ struct GhostHandsCLI {
                 NOT invisible — may FOREGROUND / steal focus, and the key goes to whatever
                 app is focused (an OS wall). With NO app spec, key uses this HID path on
                 the FRONTMOST app (there is no pid to post to).
+          - scroll scrolls a scroll-area / list and VERIFIES by the scroll-bar position.
+            It resolves a container (--in <name> = a named AXScrollArea; else the focused
+            element's enclosing scroll area; else the largest AXScrollArea in the frontmost
+            window) and REFUSES (.noScrollArea) if none is scrollable. It reads the relevant
+            scroll bar's AXValue (0.0 top/left … 1.0 bottom/right) BEFORE acting, actuates —
+            preferring a cursor-less AX scroll-bar SET when the bar is settable, else a CGEvent
+            scrollWheel (invisible CGEventPostToPid by default; --visible posts via the HID tap
+            so the WindowServer routes the wheel to the window under the point, NOT invisible) —
+            then RE-READS the bar: position MOVED ⇒ VERIFIED (quotes before → after); UNCHANGED
+            ⇒ dispatched-unverified — a scroll already pinned at the boundary that cannot move,
+            or a list with no readable scroll bar, is honestly DISPATCHED, NEVER a fake success.
+            [amount] is a positive page count (default 1 page); a bad direction/amount REFUSES
+            (exit 2) before acting.
           - install mounts the DMG (hdiutil), finds the SINGLE top-level .app, and
             copies it with cp -R (no GUI drag — no cursor, no focus steal), then
             ALWAYS detaches the mount. It REFUSES (nothing copied) on a missing DMG,
