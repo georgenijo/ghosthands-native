@@ -69,10 +69,15 @@ extension GhostHands {
             // on-screen control.
             var o = ElementSearchOptions()
             o.excludeRoles = Finder.excludedRoles
-            o.maxDepth = Finder.maxSearchDepth   // cycle/stack-overflow guard
-            return root.searchElements(matching: query, options: o)
-                .map { Finder.facts(of: $0) }
-                .filter { NameMatch.matches($0, query: query) }
+            o.maxDepth = Finder.maxSearchDepth
+            // CYCLE-SAFE: Finder.descendants (visited-set) with AXorcist's own
+            // per-node matches() — same candidate set as searchElements, but a
+            // cyclic macOS-26 tree is walked once instead of exploding (crash/hang).
+            return Finder.descendants(under: root, maxDepth: o.maxDepth) {
+                $0.matches(query: query, options: o)
+            }
+            .map { Finder.facts(of: $0) }
+            .filter { NameMatch.matches($0, query: query) }
         }
 
         var hits = FindResult.dedup(search(under: target.element))

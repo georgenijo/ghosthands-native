@@ -324,9 +324,19 @@ enum Finder {
     /// roles count as a candidate.
     static func candidateMatches(named name: String, under root: Element,
                                  accept: (ElementFacts) -> Bool) -> [(Element, ElementFacts)] {
-        root.searchElements(matching: name, options: options())
-            .map { ($0, facts(of: $0)) }
-            .filter { accept($0.1) }
+        let opts = options()
+        // CYCLE-SAFE traversal: walk via `descendants` (depth cap + visited-set)
+        // applying AXorcist's OWN per-node `matches(query:options:)` — the IDENTICAL
+        // predicate `searchElements(matching:)` uses, so the candidate set is
+        // unchanged. AXorcist's `searchElements` has no visited-set, so on a CYCLIC
+        // AX tree (macOS 26 exposes them) it explodes combinatorially — the SIGSEGV
+        // (stack overflow) and the 20–50 s HANG both came from that unguarded walk.
+        // The visited-set visits each node once: correct AND fast.
+        return descendants(under: root, maxDepth: opts.maxDepth) {
+            $0.matches(query: name, options: opts)
+        }
+        .map { ($0, facts(of: $0)) }
+        .filter { accept($0.1) }
     }
 
     /// (element, facts) for every actionable control matching `name`.
