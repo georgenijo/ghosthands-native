@@ -133,6 +133,12 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// selector has no AX equivalent — these selector verbs REQUIRE CDP. A
     /// usage-class refuse, surfaced before any work.
     case selectorNeedsCDP
+    /// A `web click`/`web fill`/`web html` was given an `@eN` ref whose stamped
+    /// `data-gh-ref` element is no longer in the DOM — the page navigated or
+    /// re-rendered since the `web read` that minted the ref. We REFUSE rather than
+    /// act on a moved element (the ref-addressing honesty boundary: a stale handle
+    /// never silently retargets), telling the caller to re-read for fresh refs.
+    case staleRef(ref: String)
     /// A `right-click` fell to the PIXEL route (the element advertises no
     /// AXShowMenu) but the element exposes NO readable AX frame to aim at. We
     /// REFUSE rather than right-click a guessed point — a blind poke has no
@@ -277,6 +283,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case .selectorNeedsCDP:
             return "a CSS selector has no AX equivalent — `web click`/`web fill` "
                 + "REQUIRE CDP; drop --ax (default is --cdp, port 9222)"
+        case let .staleRef(ref):
+            return "\(ref) is a stale ref — the page navigated or re-rendered since "
+                + "the last `web read` (the stamped element is gone); re-read to get "
+                + "fresh refs, then address by the new @eN"
         case let .noElementFrame(name):
             return "\(name.debugDescription) advertises no AXShowMenu and exposes "
                 + "no readable frame — refusing to right-click a guessed point "

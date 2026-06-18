@@ -280,7 +280,11 @@ extension JSONResult {
     public static func fromWebRead(_ r: GhostHands.WebReadResult,
                                    served: GhostHands.ServedLens) -> JSONResult {
         let entries = GHJSONValue.array(r.entries.map { e in
-            GHJSONValue.object([("text", .string(WebDigest.line(e)))])
+            var fields: [(String, GHJSONValue)] = [("text", .string(WebDigest.line(e)))]
+            // Surface the `@eN` ref explicitly so a machine consumer can address by
+            // it without re-parsing the rendered line (omitted when there is none).
+            if let ref = e.ref { fields.append(("ref", .string(ref))) }
+            return GHJSONValue.object(fields)
         })
         return JSONResult(
             verb: "web read", status: .ok, app: r.app,

@@ -55,6 +55,34 @@ final class CDPDigestTests: XCTestCase {
         XCTAssertNil(entries[0].facts.frame)
     }
 
+    /// Issue #7 — interactive rows carry their stamped `@eN` ref through to the
+    /// entry; a text/heading row (no ref stamped) has nil ref. The bare id from the
+    /// page ("e1") is surfaced as the `@e1` handle the digest prints.
+    func testEntriesCarryRefsForInteractiveOnly() {
+        let rows: [[String: Any]] = [
+            ["ref": "e1", "role": "a", "name": "Sign in",
+             "x": 10.0, "y": 20.0, "w": 80.0, "h": 24.0],
+            ["ref": "e2", "role": "input", "name": "", "value": "typed",
+             "x": 0.0, "y": 0.0, "w": 50.0, "h": 20.0],
+            ["ref": "", "role": "h1", "name": "Welcome",
+             "x": 0.0, "y": 0.0, "w": 200.0, "h": 40.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries.map { $0.ref }, ["@e1", "@e2", nil])
+    }
+
+    /// A ref'd entry renders the handle at the START of the digest line, so look
+    /// and click share one address: `@e1 AXLink "Sign in" @(…)`.
+    func testRefRendersOnDigestLine() {
+        let rows: [[String: Any]] = [
+            ["ref": "e7", "role": "button", "name": "Search",
+             "x": 412.0, "y": 240.0, "w": 86.0, "h": 32.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(WebDigest.line(entries[0]),
+                       "@e7 AXButton \"Search\" @(412,240 86×32)")
+    }
+
     /// The browser-surface routing hint: a browser bundle id probes CDP; a native
     /// app (or nil bundle) never does.
     func testIsBrowserSurfaceHint() {

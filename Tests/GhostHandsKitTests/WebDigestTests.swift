@@ -188,6 +188,28 @@ final class WebDigestTests: XCTestCase {
         XCTAssertEqual(WebDigest.line(entry), "AXLink \"Sign in\" frame:?")
     }
 
+    /// Refs are ADDITIVE: an entry with no ref (the AX read path, which can't stamp
+    /// the live DOM) renders EXACTLY as before — no `@eN`, no regression. Only the
+    /// CDP read populates refs.
+    func testNoRefLineUnchanged() {
+        let entry = WebDigest.Entry(
+            facts: ElementFacts(role: "AXLink", title: "Docs",
+                                frame: CGRect(x: 1, y: 2, width: 3, height: 4)),
+            depth: 0, ref: nil)
+        XCTAssertEqual(WebDigest.line(entry), "AXLink \"Docs\" @(1,2 3×4)")
+        XCTAssertFalse(WebDigest.line(entry).contains("@e"))
+    }
+
+    /// A ref'd entry prepends the `@eN` handle before the role (look and click
+    /// share one address), while the trailing `@(…)` frame token stays distinct.
+    func testRefPrependedBeforeRole() {
+        let entry = WebDigest.Entry(
+            facts: ElementFacts(role: "AXLink", title: "Sign in",
+                                frame: CGRect(x: 10, y: 20, width: 80, height: 24)),
+            depth: 0, ref: "@e5")
+        XCTAssertEqual(WebDigest.line(entry), "@e5 AXLink \"Sign in\" @(10,20 80×24)")
+    }
+
     func testRenderValueWhenDistinct() {
         let entry = WebDigest.Entry(
             facts: ElementFacts(role: "AXTextField", title: "Email", value: "a@b.com"),

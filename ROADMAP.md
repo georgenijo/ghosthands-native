@@ -124,6 +124,15 @@ session (P0), **#10** page-side `web wait` (P0), **#8** form-control state in `w
 (P1), **#11** no-JS `web text/attr/count` (P1). Loop order: #7 → #9 → #10 → #8 → #11,
 with #5/#6 slotted where they touch the same files.
 
+Status (branch `feat/web-parity`): **#7 ✅ shipped** — the CDP `web read` stamps
+`@eN` on every interactive element; `web click`/`web fill`/`web html` accept the
+ref (resolving it to a `data-gh-ref` attribute selector) AND raw CSS (additive); a
+ref whose stamped element is gone after a nav/re-render REFUSES (`staleRef`,
+"re-read"). Live-verified on example.com→iana (click-by-ref VERIFIED via
+navigation) and html.duckduckgo.com (fill-by-ref VERIFIED via read-back). The
+see-the-words find backup is the scheduled tail item (after #11). Remaining:
+#9 → #10 → #8 → #11.
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.

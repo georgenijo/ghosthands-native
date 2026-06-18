@@ -29,6 +29,51 @@ import Foundation
 // (readback == text → verified) — is a PURE function over the FABRICATED probe
 // dictionary, so it is hermetically unit-tested with no socket and no browser.
 
+// MARK: - Pure: shared @ref addressing (read → click/fill use one handle)
+
+/// The shared numbered-handle addressing that lets `web read` and `web
+/// click`/`web fill` speak the SAME language (issue #7). `web read` stamps a
+/// `data-gh-ref="eN"` attribute on each interactive element and prints `@eN`;
+/// `web click @eN` / `web fill @eN` resolve that handle back to the element via
+/// the attribute selector. CSS selectors keep working unchanged — refs are
+/// ADDITIVE, recognised only by the `@e<digits>` shape, so a real selector like
+/// `#submit` or `input[name=q]` passes straight through.
+///
+/// PURE string logic — no IO. The staleness check is NOT here: it lives at action
+/// time (a ref whose `data-gh-ref` is gone after a nav/re-render matches nothing,
+/// and the caller turns that miss into a `staleRef` refuse rather than acting).
+public enum WebRef {
+    /// Parse a ref handle `@e<digits>` (e.g. `@e5`) into its bare id (`e5`), or nil
+    /// when the string is not a ref handle (so it is treated as a raw CSS selector).
+    /// `@e` with no digits, `@elogin`, `#submit`, `input[name=q]` → nil (passthrough).
+    public static func parse(_ s: String) -> String? {
+        guard s.hasPrefix("@e") else { return nil }
+        let id = s.dropFirst()              // "e5"
+        let digits = id.dropFirst()         // "5"
+        guard !digits.isEmpty, digits.allSatisfy(\.isNumber) else { return nil }
+        return String(id)
+    }
+
+    /// True iff `s` is a ref handle (vs a raw CSS selector).
+    public static func isRef(_ s: String) -> Bool { parse(s) != nil }
+
+    /// The CSS selector a ref id resolves to — the `data-gh-ref` attribute the read
+    /// stamped. A gone attribute (nav/re-render) makes this match nothing → stale.
+    public static func selector(forID id: String) -> String {
+        "[data-gh-ref=\"\(id)\"]"
+    }
+
+    /// Resolve a click/fill/html target: a ref handle → (attribute selector,
+    /// isRef:true); any other string is a raw CSS selector passed through verbatim
+    /// (isRef:false). The caller probes with `.selector` and, on a no-match,
+    /// REFUSES with `staleRef` when `.isRef` (the ref's element moved) vs
+    /// `selectorNotFound` for a raw selector (a wrong/absent selector).
+    public static func resolve(_ target: String) -> (selector: String, isRef: Bool) {
+        if let id = parse(target) { return (selector(forID: id), true) }
+        return (target, false)
+    }
+}
+
 // MARK: - Pure: the occlusion + probe decision
 
 /// The decision a `web click` makes from the page probe ALONE — the testable

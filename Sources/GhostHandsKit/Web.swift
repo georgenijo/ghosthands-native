@@ -130,9 +130,18 @@ public enum WebDigest {
     public struct Entry: Sendable, Equatable {
         public var facts: ElementFacts
         public var depth: Int
-        public init(facts: ElementFacts, depth: Int) {
+        /// The shared `@eN` ref handle stamped on this interactive element at read
+        /// time (the fast everyday addressing path: `web read` prints it, `web
+        /// click/fill @eN` resolves it). Nil for non-interactive (text/heading)
+        /// entries and for the AX read path — which can't stamp the live DOM, so
+        /// only the CDP read populates refs. A ref resolves back to the element via
+        /// the `data-gh-ref` attribute the read wrote; a navigation/re-render that
+        /// removes that attribute makes the ref REFUSE ("stale ref") at action time.
+        public var ref: String?
+        public init(facts: ElementFacts, depth: Int, ref: String? = nil) {
             self.facts = facts
             self.depth = depth
+            self.ref = ref
         }
     }
 
@@ -175,7 +184,12 @@ public enum WebDigest {
     public static func line(_ entry: Entry) -> String {
         let indent = String(repeating: "  ", count: entry.depth)
         let role = entry.facts.role ?? "AXUnknown"
-        var parts = [role]
+        // The `@eN` ref (when present) LEADS the line so look and click share one
+        // handle: read prints `@e5 AXLink "Sign in" @(…)`, then `web click @e5`.
+        // Distinct from the trailing `@(x,y w×h)` frame token (paren, not `eN`).
+        var parts: [String] = []
+        if let ref = entry.ref { parts.append(ref) }
+        parts.append(role)
         let name = SnapshotRender.displayName(entry.facts)
         if let name, name != role {
             parts.append(name.debugDescription)
@@ -340,13 +354,27 @@ public enum CDPDigest {
     /// the ref/snapshot model.)
     public static let evaluateExpression = """
     (() => {
+      // Clear any `data-gh-ref` from a PRIOR read first: refs are valid only until
+      // the next read or a navigation, so a re-read SUPERSEDES — old handles must
+      // not linger and collide with the new numbering.
+      for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
       const out = [];
-      const wanted = ['a','button','input','select','textarea','h1','h2','h3','h4','h5','h6'];
+      const interactive = ['a','button','input','select','textarea'];
+      const text = ['h1','h2','h3','h4','h5','h6'];
+      const wanted = interactive.concat(text);
+      let n = 0;
       for (const el of document.querySelectorAll(wanted.join(','))) {
         const r = el.getBoundingClientRect();
-        const role = el.getAttribute('role') || el.tagName.toLowerCase();
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute('role') || tag;
         const name = (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 200);
-        out.push({ role, name, value: (el.value || '').slice(0, 200),
+        // Stamp a shared ref on INTERACTIVE elements only (headings are read for
+        // context, never clicked). The attribute IS the persistent ref store: it
+        // lives in the browser's DOM across separate CLI processes, and its
+        // absence after a nav/re-render is the honest staleness signal.
+        let ref = '';
+        if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
+        out.push({ ref, role, name, value: (el.value || '').slice(0, 200),
                    x: r.x, y: r.y, w: r.width, h: r.height });
       }
       return out;
@@ -384,7 +412,10 @@ public enum CDPDigest {
             if name == nil && value == nil { continue }
             let frame = boundingBox(row)
             let facts = ElementFacts(role: role, title: name, value: value, frame: frame)
-            out.append(WebDigest.Entry(facts: facts, depth: 0))
+            // The read stamped a bare id ("e5") on interactive elements; surface it
+            // as the `@e5` handle the digest prints and `web click/fill` accepts.
+            let ref = (row["ref"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
+            out.append(WebDigest.Entry(facts: facts, depth: 0, ref: ref))
         }
         return out
     }
@@ -794,11 +825,16 @@ extension GhostHands {
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
         let session = try await openPageSession(target: target, port: port)
 
+        // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
+        let resolved = WebRef.resolve(selector)
         // ONE occlusion + geometry probe, returned by value, decided PURELY.
         let probe = try await evaluateObject(
-            session, WebActuate.probeExpression(selector: selector))
+            session, WebActuate.probeExpression(selector: resolved.selector))
         switch WebActuate.clickDecision(from: probe) {
         case .notFound:
+            // A ref that matches nothing = the stamped element moved → stale, not a
+            // bad selector. REFUSE distinctly so the caller re-reads, never retargets.
+            if resolved.isRef { throw GhostHandsError.staleRef(ref: selector) }
             throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
         case let .covered(by):
             throw GhostHandsError.elementCovered(selector: selector, coveredBy: by)
@@ -828,20 +864,25 @@ extension GhostHands {
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
         let session = try await openPageSession(target: target, port: port)
 
+        // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
+        let resolved = WebRef.resolve(selector)
         let probe = try await evaluateObject(
-            session, WebActuate.probeExpression(selector: selector))
+            session, WebActuate.probeExpression(selector: resolved.selector))
         // A fill only needs the element to EXIST — not a usable box (a zero-box
         // input, e.g. one briefly display:none then shown, is still fillable). So
         // gate directly on `found`, NOT on `clickDecision` (which also demotes a
         // box-less element to `.notFound`, the wrong refuse for fill).
         guard WebActuate.boolValue(probe["found"]) else {
+            // A ref that matches nothing = the stamped element moved → stale refuse.
+            if resolved.isRef { throw GhostHandsError.staleRef(ref: selector) }
             throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
         }
         if WebActuate.isSecure(from: probe) {
             throw GhostHandsError.secureFieldUnverifiable(name: selector)
         }
 
-        let readback = try await focusSetAndReadBack(session, selector: selector, text: text)
+        let readback = try await focusSetAndReadBack(
+            session, selector: resolved.selector, text: text)
         let verdict = WebActuate.fillVerdict(intended: text, readback: readback)
         return WebActuateResult(app: target.name, selector: selector,
                                 verb: "filled", verdict: verdict, port: port)
@@ -1042,9 +1083,18 @@ extension GhostHands {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
         let session = try await openPageSession(target: target, port: port)
+        // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
+        let resolved = WebRef.resolve(selector)
         let probe = try await evaluateObject(
-            session, WebHtml.htmlProbeExpression(selector: selector))
-        // The pure shaper raises `selectorNotFound` on a `found:false` probe.
+            session, WebHtml.htmlProbeExpression(selector: resolved.selector))
+        // A ref that matches nothing = the stamped element moved → stale refuse
+        // (distinct from the shaper's `selectorNotFound` for a raw CSS selector).
+        if resolved.isRef, !WebActuate.boolValue(probe["found"]) {
+            throw GhostHandsError.staleRef(ref: selector)
+        }
+        // The pure shaper raises `selectorNotFound` on a `found:false` probe. The
+        // ORIGINAL `selector` (the `@e5` the user typed) is reported, not the
+        // resolved attribute selector.
         let shaped = try WebHtml.shape(probe, selector: selector, app: target.name)
         return WebHtmlResult(app: target.name, selector: selector,
                              shaped: shaped, port: port)

@@ -1746,11 +1746,11 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
-          ghosthands web read <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   page digest (auto: CDP when a debug port is open, else AX)
+          ghosthands web read <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   page digest; CDP read stamps @eN on each interactive element (auto: CDP when a debug port is open, else AX)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   list open tabs (CDP lists background tabs too; AX marks * selected)
-          ghosthands web click "<selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click a CSS-selected element (CDP-only), verified by navigation
-          ghosthands web fill "<selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set a CSS-selected input's value (CDP-only), verified by read-back
-          ghosthands web html "<selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump a CSS-selected element's outerHTML + attrs + computed style (CDP-only read)
+          ghosthands web click "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click an element by @eN ref (from web read) or CSS selector (CDP-only), verified by navigation
+          ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
+          ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           (--relaunch: opt-in. When the debug port is CLOSED, launch a NEW, ISOLATED throwaway browser
            instance — ephemeral OS-chosen port + a fresh temp profile (never your real cookies/history).
@@ -1815,7 +1815,9 @@ struct GhostHandsCLI {
           ghosthands extract Mail --in "Messages"
           ghosthands web read Brave
           ghosthands web tabs Chrome
-          ghosthands web click "#submit" Brave
+          ghosthands web click "@e5" Brave          # by ref from `web read` (no selector hand-authoring)
+          ghosthands web click "#submit" Brave       # …or a raw CSS selector (still works)
+          ghosthands web fill "@e3" "swift" Chrome
           ghosthands web fill "input[name=q]" "swift" Chrome
           ghosthands web html "#submit" Brave
           ghosthands web eval "document.title" Chrome
