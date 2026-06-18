@@ -52,6 +52,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     case pointOutsideWindow(point: String, window: String, app: String)
     /// A pixel coordinate argument did not parse as a number.
     case badCoordinate(String)
+    /// A `key` was given a base key name that is not in the known set — a
+    /// usage-class error (exit 2), mirroring `.unknownAction`. We refuse early
+    /// (rather than post a guessed key) and report what IS supported.
+    case unknownKey(String)
+    /// A `key` spec did not parse — empty, no base key, or an unknown modifier
+    /// token in a chord. We REFUSE rather than drop a modifier or post nothing.
+    case badKeySpec(String)
     /// `web tabs` could not read a tab strip — the browser exposes no AXTabGroup
     /// (or it lists no tabs) on the AX tree. We REFUSE rather than guess a tab
     /// list (the web tier's honesty boundary for tab enumeration).
@@ -143,6 +150,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "to poke a location that is not on the target window"
         case let .badCoordinate(raw):
             return "\(raw.debugDescription) is not a valid coordinate (expected a number)"
+        case let .unknownKey(key):
+            return "unknown key \(key.debugDescription) — use one of "
+                + "\(KeyName.known) (chords via '+', e.g. cmd+shift+t)"
+        case let .badKeySpec(spec):
+            return "\(spec.debugDescription) is not a valid key spec — expected "
+                + "<key> or <mod>+<key> (mods: cmd|shift|alt|ctrl); no base key or "
+                + "an unknown modifier token"
         case let .tabsNotExposed(app):
             return "no tab strip exposed on the AX tree in \(app) — the browser "
                 + "does not advertise an AXTabGroup of tabs (refusing to guess a "
