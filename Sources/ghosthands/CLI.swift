@@ -35,7 +35,7 @@ struct GhostHandsCLI {
         case "navigate":
             runNavigate(Array(args.dropFirst()))
         case "web":
-            runWeb(Array(args.dropFirst()))
+            await runWeb(Array(args.dropFirst()))
         case "windows":
             runWindows(Array(args.dropFirst()))
         case "window":
@@ -200,31 +200,57 @@ struct GhostHandsCLI {
     // MARK: - web (read | tabs)
 
     @MainActor
-    static func runWeb(_ rest: [String]) {
+    static func runWeb(_ rest: [String]) async {
         guard let sub = rest.first else { usage() }
         let tail = Array(rest.dropFirst())
         switch sub {
-        case "read": runWebRead(tail)
-        case "tabs": runWebTabs(tail)
+        case "read": await runWebRead(tail)
+        case "tabs": await runWebTabs(tail)
         default: usage()
         }
     }
 
+    /// Scan `--cdp` / `--ax` / `--debug-port <N>` out of the args (in any order)
+    /// and return the lens, port, and remaining positionals — mirroring the
+    /// snapshot `--ax|--json` loop and `parseWindowSelector`. Default lens is
+    /// `.auto` (CDP-when-reachable, else AX), default port 9222.
+    static func parseWebLens(_ args: [String]) -> (lens: WebLens, port: Int, positional: [String]) {
+        var lens: WebLens = .auto
+        var port = 9222
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--cdp": lens = .cdp; i += 1
+            case "--ax": lens = .ax; i += 1
+            case "--debug-port":
+                if i + 1 < args.count, let p = Int(args[i + 1]) { port = p; i += 2 }
+                else { i += 1 }
+            default: positional.append(args[i]); i += 1
+            }
+        }
+        return (lens, port, positional)
+    }
+
     @MainActor
-    static func runWebRead(_ rest: [String]) {
-        guard let browser = rest.first else { usage() }
+    static func runWebRead(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        guard let browser = positional.first else { usage() }
         do {
-            let result = try GhostHands.webRead(browser: browser)
+            let (result, served) = try await GhostHands.webRead(
+                browser: browser, lens: lens, debugPort: port)
             let body = WebDigest.render(result.entries)
             if !body.isEmpty { print(body) }
             // Honest footer to stderr: distinguish "no page surface" from a page
-            // that is present but has no meaningful controls/text.
+            // that is present but has no meaningful controls/text, AND name the
+            // lens that served the read.
+            let via = lensLabel(served)
             let note: String
             if !result.hasWebArea {
                 note = "— no AXWebArea (page) found in \(result.app); "
-                    + "browser chrome only (nothing to read)"
+                    + "browser chrome only (nothing to read) (\(via))"
             } else {
-                note = "— \(result.count) page elements in \(result.app)"
+                note = "— \(result.count) page elements in \(result.app) (\(via))"
             }
             FileHandle.standardError.write(Data((note + "\n").utf8))
         } catch let error as GhostHandsError {
@@ -235,20 +261,30 @@ struct GhostHandsCLI {
     }
 
     @MainActor
-    static func runWebTabs(_ rest: [String]) {
-        guard let browser = rest.first else { usage() }
+    static func runWebTabs(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        guard let browser = positional.first else { usage() }
         do {
-            let result = try GhostHands.webTabs(browser: browser)
+            let (result, served) = try await GhostHands.webTabs(
+                browser: browser, lens: lens, debugPort: port)
             for tab in result.tabs {
                 let mark = tab.selected ? "* " : "  "
                 print(mark + tab.title)
             }
             FileHandle.standardError.write(
-                Data("— \(result.tabs.count) tabs in \(result.app)\n".utf8))
+                Data("— \(result.tabs.count) tabs in \(result.app) (\(lensLabel(served)))\n".utf8))
         } catch let error as GhostHandsError {
             fail("web tabs", error)
         } catch {
             failUnexpected("web tabs")
+        }
+    }
+
+    /// The honest "(via …)" lens label for the stderr footer.
+    static func lensLabel(_ served: GhostHands.ServedLens) -> String {
+        switch served {
+        case let .cdp(port): return "via CDP, port \(port)"
+        case .ax: return "via AX"
         }
     }
 
@@ -814,8 +850,8 @@ struct GhostHandsCLI {
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
-          ghosthands web read <browser>               page-scoped digest (chrome stripped, AX only)
-          ghosthands web tabs <browser>               list open tabs (* = selected); refuses if not exposed
+          ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
+          ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back

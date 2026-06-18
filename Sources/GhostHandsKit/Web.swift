@@ -294,6 +294,115 @@ public enum WebTabs {
     }
 }
 
+// MARK: - CDP lens + pure CDP digest shaping
+
+/// Which lens serves a `web read` / `web tabs`. `auto` prefers CDP when a debug
+/// port is reachable on a browser surface and SILENTLY falls back to the existing
+/// AX path otherwise (no regression, no refuse). `cdp` FORCES CDP — a closed port
+/// REFUSES. `ax` always takes the existing AX path and never probes a port.
+public enum WebLens: Sendable, Equatable {
+    case auto
+    case cdp
+    case ax
+}
+
+/// The routing signal, ported from the Python `route_surface` bundle-id hint: a
+/// PURE test on the target's bundle identifier. A native app (no browser hint)
+/// NEVER probes a CDP port — it goes straight to AX. (The AXWebArea second branch
+/// is omitted in Slice 1's auto-probe to avoid a full AX walk just to decide
+/// whether to probe a port; it can join a later slice.)
+public enum WebSurface {
+    static let browserBundleHints = [
+        "brave", "chrom", "safari", "edgemac", "firefox", "webkit",
+        "vivaldi", "arc", "opera",
+    ]
+
+    /// True iff `bundleID` looks like a browser (a substring hint match). nil
+    /// (no bundle id) is NOT a browser — a CDP probe is skipped.
+    public static func isBrowserSurface(bundleID: String?) -> Bool {
+        guard let id = bundleID?.lowercased() else { return false }
+        return browserBundleHints.contains { id.contains($0) }
+    }
+}
+
+/// PURE shaping of a `Runtime.evaluate` DOM-digest result (a JSON array of
+/// `{role,name,value,x,y,w,h}` objects) into `WebDigest.Entry` values, so the CDP
+/// read renders through the SAME line/render path as the AX digest. Unit-testable
+/// over a fabricated `[[String:Any]]` — no socket, no browser.
+///
+/// HONESTY: returns only the rows the DOM actually exposed; an empty array shapes
+/// to `[]` (honest empty), never a fabricated entry. Slice 1's digest is flat
+/// (depth 0) — the richer nested ref model lands in a later slice.
+public enum CDPDigest {
+    /// The DOM-digest expression evaluated in the page. Collects interactive +
+    /// text nodes with their accessible name, value, and bounding box. Kept small
+    /// and `returnByValue`-friendly. (Slice 1 keeps this minimal; Slice 2+ grows
+    /// the ref/snapshot model.)
+    public static let evaluateExpression = """
+    (() => {
+      const out = [];
+      const wanted = ['a','button','input','select','textarea','h1','h2','h3','h4','h5','h6'];
+      for (const el of document.querySelectorAll(wanted.join(','))) {
+        const r = el.getBoundingClientRect();
+        const role = el.getAttribute('role') || el.tagName.toLowerCase();
+        const name = (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 200);
+        out.push({ role, name, value: (el.value || '').slice(0, 200),
+                   x: r.x, y: r.y, w: r.width, h: r.height });
+      }
+      return out;
+    })()
+    """
+
+    /// Map one tag/role string to the AX-ish role the existing digest renders
+    /// (so a CDP line reads like an AX line). Unknown tags pass through verbatim.
+    public static func axRole(for role: String) -> String {
+        switch role.lowercased() {
+        case "a", "link": return "AXLink"
+        case "button": return "AXButton"
+        case "input", "textbox", "textfield": return "AXTextField"
+        case "textarea": return "AXTextArea"
+        case "select", "combobox": return "AXComboBox"
+        case "checkbox": return "AXCheckBox"
+        case "radio": return "AXRadioButton"
+        case "h1", "h2", "h3", "h4", "h5", "h6", "heading": return "AXHeading"
+        default: return role
+        }
+    }
+
+    /// Shape the `Runtime.evaluate` result array into flat digest entries. Drops
+    /// rows with neither a name nor a value (noise), mirroring `WebDigest`'s
+    /// drop-empty rule. Each row's box becomes the entry's frame so the existing
+    /// renderer can tag interactive controls with `@(x,y w×h)`.
+    public static func entries(fromEvaluate rows: [[String: Any]]) -> [WebDigest.Entry] {
+        var out: [WebDigest.Entry] = []
+        for row in rows {
+            let rawRole = (row["role"] as? String) ?? "AXUnknown"
+            let role = axRole(for: rawRole)
+            let name = (row["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let value = (row["value"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            // Drop a node with no name AND no value — it carries no signal.
+            if name == nil && value == nil { continue }
+            let frame = boundingBox(row)
+            let facts = ElementFacts(role: role, title: name, value: value, frame: frame)
+            out.append(WebDigest.Entry(facts: facts, depth: 0))
+        }
+        return out
+    }
+
+    /// A `CGRect` from a row's `x/y/w/h` numbers, or nil when any is missing /
+    /// the box is zero-sized (an off-layout node) — honest "no frame", never a
+    /// fabricated box.
+    static func boundingBox(_ row: [String: Any]) -> CGRect? {
+        guard let x = (row["x"] as? NSNumber)?.doubleValue,
+              let y = (row["y"] as? NSNumber)?.doubleValue,
+              let w = (row["w"] as? NSNumber)?.doubleValue,
+              let h = (row["h"] as? NSNumber)?.doubleValue,
+              w > 0 || h > 0
+        else { return nil }
+        return CGRect(x: x, y: y, width: w, height: h)
+    }
+}
+
 // MARK: - AX-touching walk (the only impure step)
 
 /// Builds a raw `WebNode` forest from a live browser app element. Mirrors
@@ -442,6 +551,137 @@ extension GhostHands {
             tabs = WebTabs.tabs(in: forest)
         }
         guard let tabs else { throw GhostHandsError.tabsNotExposed(app: target.name) }
+        return WebTabsResult(app: target.name, tabs: tabs)
+    }
+}
+
+// MARK: - Lens-aware entry points (CDP ⇄ AX)
+
+extension GhostHands {
+    /// Which lens actually served a read — surfaced to the CLI for the honest
+    /// "(via CDP, port N)" / "(via AX)" footer. Distinct from `WebLens` (the
+    /// REQUEST): `.auto` resolves to either `.cdp` or `.ax`, never stays `.auto`.
+    public enum ServedLens: Sendable, Equatable {
+        case cdp(port: Int)
+        case ax
+    }
+
+    /// `web read` with a lens. The EXISTING AX path stays authoritative; CDP is a
+    /// parallel branch IN FRONT of it, never a replacement.
+    ///
+    /// THE rule: `auto && browserSurface && portOpen → CDP; else → AX`. A closed
+    /// port under `auto` falls back SILENTLY to the unchanged AX path (the
+    /// no-regression contract); a closed port under FORCED `.cdp` REFUSES with
+    /// `cdpPortClosed` (the only place that error is thrown); FORCED `.ax` never
+    /// even probes a port.
+    @MainActor
+    public static func webRead(browser: String, lens: WebLens,
+                               debugPort: Int = 9222,
+                               settle: TimeInterval = 0.8)
+        async throws -> (result: WebReadResult, served: ServedLens) {
+        guard AXPermissionHelpers.hasAccessibilityPermissions() else {
+            throw GhostHandsError.accessibilityNotTrusted
+        }
+        let target = try Target.resolve(browser)
+
+        switch lens {
+        case .ax:
+            return (try webRead(browser: browser, settle: settle), .ax)
+        case .cdp:
+            guard await CDPDiscovery.isPortOpen(debugPort) else {
+                throw GhostHandsError.cdpPortClosed(app: target.name, port: debugPort)
+            }
+            return (try await webReadCDP(target: target, port: debugPort), .cdp(port: debugPort))
+        case .auto:
+            if WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier),
+               await CDPDiscovery.isPortOpen(debugPort) {
+                return (try await webReadCDP(target: target, port: debugPort),
+                        .cdp(port: debugPort))
+            }
+            // SILENT fall-through to AX — no regression, no refuse.
+            return (try webRead(browser: browser, settle: settle), .ax)
+        }
+    }
+
+    /// `web tabs` with a lens. CDP's win here is listing ALL tabs incl. background
+    /// ones (closing the `tabsNotExposed` gap); `/json/list` does not mark the
+    /// active tab, so `selected` is honestly left false. Same auto/forced/AX rule
+    /// as `webRead`.
+    @MainActor
+    public static func webTabs(browser: String, lens: WebLens,
+                               debugPort: Int = 9222,
+                               settle: TimeInterval = 0.6)
+        async throws -> (result: WebTabsResult, served: ServedLens) {
+        guard AXPermissionHelpers.hasAccessibilityPermissions() else {
+            throw GhostHandsError.accessibilityNotTrusted
+        }
+        let target = try Target.resolve(browser)
+
+        switch lens {
+        case .ax:
+            return (try webTabs(browser: browser, settle: settle), .ax)
+        case .cdp:
+            guard await CDPDiscovery.isPortOpen(debugPort) else {
+                throw GhostHandsError.cdpPortClosed(app: target.name, port: debugPort)
+            }
+            return (try await webTabsCDP(target: target, port: debugPort),
+                    .cdp(port: debugPort))
+        case .auto:
+            if WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier),
+               await CDPDiscovery.isPortOpen(debugPort) {
+                return (try await webTabsCDP(target: target, port: debugPort),
+                        .cdp(port: debugPort))
+            }
+            return (try webTabs(browser: browser, settle: settle), .ax)
+        }
+    }
+
+    // MARK: CDP-backed reads (impure thin — pure shaping in CDPDigest/CDPTarget)
+
+    /// Read the page via CDP: open a session to the browser-level socket, then
+    /// `Runtime.enable` + `Runtime.evaluate` the DOM-digest expression. HONEST:
+    /// returns only the DOM the page actually exposed; an empty page reads empty.
+    /// Slice 1's digest is flat (point-in-time, no nested refs).
+    @MainActor
+    static func webReadCDP(target: Target, port: Int) async throws -> WebReadResult {
+        guard let wsURL = try await CDPDiscovery.browserWebSocketURL(
+            port: port, app: target.name) else {
+            // The endpoint answered but advertised no browser socket — honest
+            // empty page rather than a fabricated digest.
+            return WebReadResult(app: target.name, entries: [], hasWebArea: false)
+        }
+        let session = try CDPSession.open(wsURL: wsURL)
+        _ = try await session.call("Runtime.enable")
+        let result = try await session.call("Runtime.evaluate", params: [
+            "expression": CDPDigest.evaluateExpression,
+            "returnByValue": true,
+            "awaitPromise": true,
+        ])
+        let rows = evaluateRows(from: result)
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        // A reachable CDP page IS a web surface (hasWebArea = true), so the CLI
+        // footer reports element count rather than "no page".
+        return WebReadResult(app: target.name, entries: entries, hasWebArea: true)
+    }
+
+    /// Pull the `[[String:Any]]` array out of a `Runtime.evaluate` reply's
+    /// `{result:{value:[…]}}` shape. Honest empty `[]` when the page returned a
+    /// non-array (or nothing) — never a fabricated row.
+    static func evaluateRows(from reply: [String: Any]) -> [[String: Any]] {
+        guard let resultObj = reply["result"] as? [String: Any],
+              let value = resultObj["value"] as? [Any] else { return [] }
+        return value.compactMap { $0 as? [String: Any] }
+    }
+
+    /// List ALL tabs via CDP `/json/list` (incl. background tabs AX can't see).
+    /// `selected` is honestly false — `/json/list` does not mark the active tab.
+    @MainActor
+    static func webTabsCDP(target: Target, port: Int) async throws -> WebTabsResult {
+        let targets = try await CDPDiscovery.list(port: port, app: target.name)
+        let tabs = targets.map { t -> WebTab in
+            let title = t.title.isEmpty ? (t.url.isEmpty ? "(untitled tab)" : t.url) : t.title
+            return WebTab(title: title, selected: false)
+        }
         return WebTabsResult(app: target.name, tabs: tabs)
     }
 }
