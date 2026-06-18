@@ -758,20 +758,49 @@ struct GhostHandsCLI {
 
     // MARK: - web click / web fill (CDP-only DOM-selector actuation)
 
+    /// Parse the optional see-the-words locator (`--text <visible> [--nth N]`),
+    /// returning the text (nil ⇒ use the CSS/ref path), the 0-based nth (nil ⇒
+    /// top-ranked), and the args with both pairs removed. `--nth` is 1-based for
+    /// humans; a non-positive / non-integer value is a usage refuse.
+    static func parseTextLocator(_ verb: String, _ args: [String])
+        -> (text: String?, nth: Int?, rest: [String]) {
+        let (text, a1) = extractFlagValue("--text", from: args)
+        let (nthRaw, a2) = extractFlagValue("--nth", from: a1)
+        var nth: Int?
+        if let nthRaw {
+            guard let n = Int(nthRaw), n >= 1 else {
+                refuse(verb, message: "--nth must be a positive integer (1-based)", code: 2)
+            }
+            nth = n - 1
+        }
+        return (text, nth, a2)
+    }
+
     @MainActor
     static func runWebClick(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web click <selector> [browser]   (browser optional with a managed session)
-        guard let selector = positional.first else { usage() }
+        let (textLoc, nth, afterLoc) = parseTextLocator("web click", scanJSON(rest))
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterLoc)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
-        let explicitBrowser = positional.count >= 2 ? positional[1] : nil
-        guard let browser = WebSession.effectiveBrowser(
-            explicit: explicitBrowser, session: session) else { usage() }
         do {
-            let result = try await GhostHands.webClick(
-                selector: selector, browser: browser, lens: lens, debugPort: port,
-                relaunch: relaunch)
+            let result: GhostHands.WebActuateResult
+            if let textLoc {
+                // See-the-words backup: web click --text "<visible>" [--nth N] [browser]
+                guard let browser = WebSession.effectiveBrowser(
+                    explicit: positional.first, session: session) else { usage() }
+                result = try await GhostHands.webClickByText(
+                    text: textLoc, nth: nth, browser: browser, lens: lens,
+                    debugPort: port, relaunch: relaunch)
+            } else {
+                // web click <@eN|selector> [browser]
+                guard let selector = positional.first else { usage() }
+                let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+                guard let browser = WebSession.effectiveBrowser(
+                    explicit: explicitBrowser, session: session) else { usage() }
+                result = try await GhostHands.webClick(
+                    selector: selector, browser: browser, lens: lens, debugPort: port,
+                    relaunch: relaunch)
+            }
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
@@ -783,20 +812,33 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebFill(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web fill <selector> <text> [browser]   (browser optional with a session)
-        guard positional.count >= 2 else { usage() }
-        let selector = positional[0]
-        let text = positional[1]
+        let (textLoc, nth, afterLoc) = parseTextLocator("web fill", scanJSON(rest))
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterLoc)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
-        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
-        guard let browser = WebSession.effectiveBrowser(
-            explicit: explicitBrowser, session: session) else { usage() }
         do {
-            let result = try await GhostHands.webFill(
-                selector: selector, text: text, browser: browser, lens: lens,
-                debugPort: port, relaunch: relaunch)
+            let result: GhostHands.WebActuateResult
+            if let textLoc {
+                // web fill --text "<label>" "<value>" [--nth N] [browser]
+                guard let value = positional.first else { usage() }
+                let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+                guard let browser = WebSession.effectiveBrowser(
+                    explicit: explicitBrowser, session: session) else { usage() }
+                result = try await GhostHands.webFillByText(
+                    text: textLoc, value: value, nth: nth, browser: browser,
+                    lens: lens, debugPort: port, relaunch: relaunch)
+            } else {
+                // web fill <@eN|selector> <text> [browser]
+                guard positional.count >= 2 else { usage() }
+                let selector = positional[0]
+                let text = positional[1]
+                let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+                guard let browser = WebSession.effectiveBrowser(
+                    explicit: explicitBrowser, session: session) else { usage() }
+                result = try await GhostHands.webFill(
+                    selector: selector, text: text, browser: browser, lens: lens,
+                    debugPort: port, relaunch: relaunch)
+            }
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
@@ -812,7 +854,8 @@ struct GhostHandsCLI {
     /// never a success claim). A footer names the lens (CDP, port N).
     static func reportWebActuate(_ r: GhostHands.WebActuateResult) -> String {
         let sel = r.selector.debugDescription
-        let footer = "(via CDP, port \(r.port))"
+        // The see-the-words backup appends an honest note naming what it picked.
+        let footer = (r.note.map { $0 + " " } ?? "") + "(via CDP, port \(r.port))"
         switch r.verdict {
         case let .verified(evidence):
             return "\(r.verb) \(sel) in \(r.app) — verified: \(evidence) \(footer)"
@@ -2038,7 +2081,9 @@ struct GhostHandsCLI {
           ghosthands web read [browser] [--cdp|--ax] [--debug-port N] [--relaunch]   page digest; CDP read stamps @eN on each interactive element (auto: CDP when a debug port is open, else AX; browser optional with a managed session)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands web click "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click an element by @eN ref (from web read) or CSS selector (CDP-only), verified by navigation
+          ghosthands web click --text "<visible>" [browser] [--nth N]                              …or by what a human SEES (the backup: re-resolved live, ranks ties, reports what it picked)
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
+          ghosthands web fill --text "<label>" "<value>" [browser] [--nth N]                       …or by the field's visible label (placeholder/aria-label/<label>)
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)

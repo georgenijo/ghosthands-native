@@ -927,6 +927,21 @@ extension GhostHands {
         public let verb: String
         public let verdict: WebActuate.Verdict
         public let port: Int
+        /// An optional honest note appended to the report — used by the
+        /// see-the-words backup to say WHICH element a `--text` query picked and how
+        /// many matched (so the user can `--nth` to choose another). Nil for the
+        /// ref/CSS path, which addresses one element exactly.
+        public let note: String?
+
+        public init(app: String, selector: String, verb: String,
+                    verdict: WebActuate.Verdict, port: Int, note: String? = nil) {
+            self.app = app
+            self.selector = selector
+            self.verb = verb
+            self.verdict = verdict
+            self.port = port
+            self.note = note
+        }
 
         /// True only when an observed world-change proved the actuation.
         public var verified: Bool {
@@ -1033,6 +1048,91 @@ extension GhostHands {
         let verdict = WebActuate.fillVerdict(intended: text, readback: readback)
         return WebActuateResult(app: target.name, selector: selector,
                                 verb: "filled", verdict: verdict, port: port)
+    }
+
+    // MARK: See-the-words backup (web click/fill --text) — issue #7 secondary path
+
+    /// `web click --text "<visible>" [--nth N]` — click the control a HUMAN would
+    /// read as `<visible>`, re-resolved LIVE (can't go stale like a ref). Ranks ties
+    /// and acts on the obvious top one (or `--nth N`), reports WHICH it picked, and
+    /// verifies by navigation — the same honesty as every actuation.
+    @MainActor
+    public static func webClickByText(text: String, nth: Int?, browser: String,
+                                      lens: WebLens, debugPort: Int = 9222,
+                                      relaunch: Bool = false) async throws -> WebActuateResult {
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
+        let label = try await resolveByText(session, target: target, text: text,
+                                            nth: nth, fillable: false)
+        // Act on the stamped pick through the SAME occlusion + verify path.
+        let probe = try await evaluateObject(
+            session, WebActuate.probeExpression(selector: WebFind.pickSelector))
+        switch WebActuate.clickDecision(from: probe) {
+        case .notFound:
+            // The pick vanished between resolve and act (a re-render) — honest refuse.
+            throw GhostHandsError.elementNotFound(name: text, app: target.name)
+        case let .covered(by):
+            throw GhostHandsError.elementCovered(selector: label.label, coveredBy: by)
+        case let .proceed(center, _):
+            let hrefBefore = try await readLocationHref(session)
+            try await dispatchTrustedClick(session, at: center)
+            let verdict = try await postClickVerdict(session, hrefBefore: hrefBefore)
+            return WebActuateResult(app: target.name, selector: label.label,
+                                    verb: "clicked", verdict: verdict, port: port,
+                                    note: label.note)
+        }
+    }
+
+    /// `web fill --text "<label>" "<value>" [--nth N]` — fill the field a human
+    /// would read as labeled `<label>` (aria-label / placeholder / associated
+    /// `<label>`), re-resolved live, verified by read-back.
+    @MainActor
+    public static func webFillByText(text: String, value: String, nth: Int?,
+                                     browser: String, lens: WebLens, debugPort: Int = 9222,
+                                     relaunch: Bool = false) async throws -> WebActuateResult {
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
+        let label = try await resolveByText(session, target: target, text: text,
+                                            nth: nth, fillable: true)
+        let probe = try await evaluateObject(
+            session, WebActuate.probeExpression(selector: WebFind.pickSelector))
+        guard WebActuate.boolValue(probe["found"]) else {
+            throw GhostHandsError.elementNotFound(name: text, app: target.name)
+        }
+        if WebActuate.isSecure(from: probe) {
+            throw GhostHandsError.secureFieldUnverifiable(name: label.label)
+        }
+        let readback = try await focusSetAndReadBack(
+            session, selector: WebFind.pickSelector, text: value)
+        let verdict = WebActuate.fillVerdict(intended: value, readback: readback)
+        return WebActuateResult(app: target.name, selector: label.label,
+                                verb: "filled", verdict: verdict, port: port,
+                                note: label.note)
+    }
+
+    /// Run the find resolver, classify it, and (on a hit) return the picked label +
+    /// an honest note. Throws the refuse for none / out-of-range. Shared by the
+    /// click + fill `--text` paths; the actual actuation stays in the callers.
+    @MainActor
+    static func resolveByText(_ session: CDPSession, target: Target, text: String,
+                              nth: Int?, fillable: Bool)
+        async throws -> (label: String, note: String?) {
+        let reply = try await evaluateObject(
+            session, WebFind.resolveExpression(text: text, nth: nth, fillable: fillable))
+        switch WebFind.decide(reply) {
+        case let .none(count):
+            _ = count
+            throw GhostHandsError.elementNotFound(name: text, app: target.name)
+        case let .outOfRange(count):
+            throw GhostHandsError.locatorIndexOutOfRange(
+                name: text, requested: (nth ?? 0) + 1, count: count)
+        case let .found(label, count):
+            let note = "picked by text \(text.debugDescription) → \(label.debugDescription)"
+                + (count > 1 ? " (\(count) matched; --nth N to choose another)" : "")
+            return (label, note)
+        }
     }
 
     // MARK: Selector-verb plumbing (impure thin)

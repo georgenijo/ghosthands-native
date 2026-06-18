@@ -128,7 +128,7 @@ extension JSONResult {
             // a consumer sees WHY a dispatch stayed unverified (it never upgrades
             // the status — status is decided by the verdict case above).
             evidence: evidence,
-            fields: [("port", .int(r.port))])
+            fields: [("port", .int(r.port))] + GHJSONValue.optString("picked", r.note))
     }
 
     // MARK: window mutate / raise
