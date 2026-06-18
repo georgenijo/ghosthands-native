@@ -56,6 +56,21 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// (or it lists no tabs) on the AX tree. We REFUSE rather than guess a tab
     /// list (the web tier's honesty boundary for tab enumeration).
     case tabsNotExposed(app: String)
+    /// `install` was pointed at a DMG path that does not exist on disk.
+    case dmgNotFound(String)
+    /// `hdiutil attach` failed (nonzero exit, or the plist exposed no mount-point).
+    /// REFUSE — nothing was copied.
+    case mountFailed(reason: String)
+    /// The mounted DMG contains zero top-level `.app` bundles — nothing to install.
+    case noAppInDMG(mount: String)
+    /// The mounted DMG contains more than one top-level `.app` — REFUSE rather than
+    /// guess which application the user meant.
+    case ambiguousAppInDMG(candidates: [String])
+    /// The destination already holds `<App>.app` and `--force` was not given. The
+    /// don't-clobber gate: REFUSE rather than overwrite the user's installed app.
+    case destinationExists(path: String)
+    /// `cp -R` returned nonzero — the copy did not complete.
+    case copyFailed(reason: String)
 
     public var description: String {
         switch self {
@@ -112,6 +127,21 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "no tab strip exposed on the AX tree in \(app) — the browser "
                 + "does not advertise an AXTabGroup of tabs (refusing to guess a "
                 + "tab list)"
+        case let .dmgNotFound(path):
+            return "no DMG at \(path.debugDescription)"
+        case let .mountFailed(reason):
+            return "could not mount the DMG: \(reason)"
+        case let .noAppInDMG(mount):
+            return "no .app found in the mounted DMG (\(mount)) — nothing to install"
+        case let .ambiguousAppInDMG(candidates):
+            return "\(candidates.count) apps in the DMG "
+                + "(\(candidates.joined(separator: ", "))) — refusing to guess "
+                + "which one to install"
+        case let .destinationExists(path):
+            return "\(path.debugDescription) already exists — refusing to "
+                + "overwrite an installed app (pass --force to replace it)"
+        case let .copyFailed(reason):
+            return "copy failed: \(reason)"
         }
     }
 }
