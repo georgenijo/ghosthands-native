@@ -79,6 +79,27 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - --json flag (works on EVERY verb)
+
+    /// Process-wide flag: was `--json` present on this invocation? Set ONCE by the
+    /// per-runner `scanJSON` strip (a CLI process runs exactly one verb, so a
+    /// static is the simplest carrier — it lets the SHARED refuse path emit a
+    /// JSON envelope without threading the bool through every `fail`/`refuse`).
+    /// Default false ⇒ the human path is byte-for-byte UNCHANGED.
+    static var jsonMode = false
+
+    /// Strip a single `--json` flag (in any order) out of `args`, RECORD it in
+    /// `jsonMode`, and return the remaining tokens. Mirrors the snapshot `--ax|
+    /// --json` loop and the other in-any-order flag strips. Idempotent — repeated
+    /// `--json` is fine; absence leaves `jsonMode` false (the human path).
+    static func scanJSON(_ args: [String]) -> [String] {
+        var rest: [String] = []
+        for a in args {
+            if a == "--json" { jsonMode = true } else { rest.append(a) }
+        }
+        return rest
+    }
+
     // MARK: - locator flags (shared by the named-control verbs)
 
     /// Scan the OPT-IN disambiguator flags out of `args` (in any order, mirroring
@@ -117,13 +138,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runClick(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 2 else { usage() }
         let name = pos[0]
         let appSpec = pos[1]
         do {
             let outcome = try GhostHands.click(name: name, appSpec: appSpec, locator: locator)
-            print(report(outcome, name: name))
+            if jsonMode { JSONResult.fromClick(outcome, name: name).emit() }
+            else { print(report(outcome, name: name)) }
         } catch let error as GhostHandsError {
             fail("click", error)
         } catch {
@@ -146,7 +168,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runType(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         let text = pos[0]
         let field = pos[1]
@@ -154,7 +176,8 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.type(text: text, field: field, appSpec: appSpec,
                                               locator: locator)
-            print(reportValue(outcome))
+            if jsonMode { JSONResult.fromValue(outcome, verb: "type").emit() }
+            else { print(reportValue(outcome)) }
         } catch let error as GhostHandsError {
             fail("type", error)
         } catch {
@@ -166,7 +189,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runSetValue(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         let value = pos[0]
         let control = pos[1]
@@ -174,7 +197,8 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.setValue(value: value, control: control,
                                                   appSpec: appSpec, locator: locator)
-            print(reportValue(outcome))
+            if jsonMode { JSONResult.fromValue(outcome, verb: "set-value").emit() }
+            else { print(reportValue(outcome)) }
         } catch let error as GhostHandsError {
             fail("set-value", error)
         } catch {
@@ -202,13 +226,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runDoubleClick(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 2 else { usage() }
         let name = pos[0]
         let appSpec = pos[1]
         do {
             let outcome = try GhostHands.doubleclick(name: name, appSpec: appSpec, locator: locator)
-            print(reportAct(outcome))
+            if jsonMode { JSONResult.fromAct(outcome, verb: "doubleclick").emit() }
+            else { print(reportAct(outcome)) }
         } catch let error as GhostHandsError {
             fail("doubleclick", error)
         } catch {
@@ -224,7 +249,7 @@ struct GhostHandsCLI {
         // fallback honours it; the AX route is always invisible); the locator
         // disambiguators (--role/--text/--nth) too; the rest are positional:
         // <name> <app>. Parse PixelFlags first, then the locator off its leftovers.
-        let (mode, afterVisible) = PixelFlags.parse(rest)
+        let (mode, afterVisible) = PixelFlags.parse(scanJSON(rest))
         let (locator, pos) = parseLocator(afterVisible)
         guard pos.count >= 2 else { usage() }
         let name = pos[0]
@@ -232,7 +257,8 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.rightClick(name: name, appSpec: appSpec, mode: mode,
                                                     locator: locator)
-            print(reportRightClick(outcome))
+            if jsonMode { JSONResult.fromRightClick(outcome).emit() }
+            else { print(reportRightClick(outcome)) }
         } catch let error as GhostHandsError {
             fail("right-click", error)
         } catch {
@@ -270,7 +296,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runAct(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         let action = pos[0]
         let name = pos[1]
@@ -278,7 +304,8 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.act(action: action, name: name, appSpec: appSpec,
                                              locator: locator)
-            print(reportAct(outcome))
+            if jsonMode { JSONResult.fromAct(outcome, verb: "act").emit() }
+            else { print(reportAct(outcome)) }
         } catch let error as GhostHandsError {
             // An unknown friendly action is a USAGE error (exit 2), distinct from
             // a control that rejects a known action (exit 1).
@@ -308,13 +335,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runFocus(_ rest: [String]) {
-        let (locator, pos) = parseLocator(rest)
+        let (locator, pos) = parseLocator(scanJSON(rest))
         guard pos.count >= 2 else { usage() }
         let name = pos[0]
         let appSpec = pos[1]
         do {
             let outcome = try GhostHands.focus(name: name, appSpec: appSpec, locator: locator)
-            print(reportFocus(outcome))
+            if jsonMode { JSONResult.fromFocus(outcome).emit() }
+            else { print(reportFocus(outcome)) }
         } catch let error as GhostHandsError {
             fail("focus", error)
         } catch {
@@ -341,8 +369,13 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWeb(_ rest: [String]) async {
-        guard let sub = rest.first else { usage() }
-        let tail = Array(rest.dropFirst())
+        // Strip `--json` (in any order) BEFORE reading the sub-verb so
+        // `web --json read` and `web read --json` are equivalent. Leaf runners
+        // re-scan the tail; `scanJSON` is idempotent, so the second pass is a
+        // no-op for `--json` and harmless.
+        let scanned = scanJSON(rest)
+        guard let sub = scanned.first else { usage() }
+        let tail = Array(scanned.dropFirst())
         switch sub {
         case "read": await runWebRead(tail)
         case "tabs": await runWebTabs(tail)
@@ -388,11 +421,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebRead(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         guard let browser = positional.first else { usage() }
         do {
             let (result, served) = try await GhostHands.webRead(
                 browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
+            if jsonMode {
+                JSONResult.fromWebRead(result, served: served).emit()
+                return
+            }
             let body = WebDigest.render(result.entries)
             if !body.isEmpty { print(body) }
             // Honest footer to stderr: distinguish "no page surface" from a page
@@ -416,11 +453,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebTabs(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         guard let browser = positional.first else { usage() }
         do {
             let (result, served) = try await GhostHands.webTabs(
                 browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
+            if jsonMode {
+                JSONResult.fromWebTabs(result, served: served).emit()
+                return
+            }
             for tab in result.tabs {
                 let mark = tab.selected ? "* " : "  "
                 print(mark + tab.title)
@@ -446,7 +487,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebClick(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         // web click <selector> <browser>
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
@@ -455,7 +496,8 @@ struct GhostHandsCLI {
             let result = try await GhostHands.webClick(
                 selector: selector, browser: browser, lens: lens, debugPort: port,
                 relaunch: relaunch)
-            print(reportWebActuate(result))
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
             failWebActuate("web click", error)
         } catch {
@@ -465,7 +507,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebFill(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         // web fill <selector> <text> <browser>
         guard positional.count >= 3 else { usage() }
         let selector = positional[0]
@@ -475,7 +517,8 @@ struct GhostHandsCLI {
             let result = try await GhostHands.webFill(
                 selector: selector, text: text, browser: browser, lens: lens,
                 debugPort: port, relaunch: relaunch)
-            print(reportWebActuate(result))
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
             failWebActuate("web fill", error)
         } catch {
@@ -512,7 +555,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebHtml(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         // web html <selector> <browser>
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
@@ -521,6 +564,10 @@ struct GhostHandsCLI {
             let result = try await GhostHands.webHtml(
                 selector: selector, browser: browser, lens: lens, debugPort: port,
                 relaunch: relaunch)
+            if jsonMode {
+                JSONResult.fromWebHtml(result).emit()
+                return
+            }
             print(WebHtml.render(result.shaped))
             // Honest footer to stderr: name the resolved selector + the lens.
             FileHandle.standardError.write(Data(
@@ -534,7 +581,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebEval(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
         // web eval <js> <browser>
         guard positional.count >= 2 else { usage() }
         let js = positional[0]
@@ -543,6 +590,10 @@ struct GhostHandsCLI {
             let result = try await GhostHands.webEval(
                 js: js, browser: browser, lens: lens, debugPort: port,
                 relaunch: relaunch)
+            if jsonMode {
+                JSONResult.fromWebEval(result).emit()
+                return
+            }
             print(result.value)
             FileHandle.standardError.write(Data(
                 "— evaluated in \(result.app) (via CDP, port \(result.port))\n".utf8))
@@ -559,11 +610,13 @@ struct GhostHandsCLI {
     static func runNavigate(_ rest: [String]) {
         // navigate "<url>" [browser]. URL required; browser optional → auto-pick
         // a running Chromium.
-        guard let url = rest.first else { usage() }
-        let browser = rest.count >= 2 ? rest[1] : nil
+        let pos = scanJSON(rest)
+        guard let url = pos.first else { usage() }
+        let browser = pos.count >= 2 ? pos[1] : nil
         do {
             let outcome = try GhostHands.navigate(url: url, browser: browser)
-            print(reportNavigate(outcome))
+            if jsonMode { JSONResult.fromNavigate(outcome).emit() }
+            else { print(reportNavigate(outcome)) }
         } catch let error as GhostHandsError {
             fail("navigate", error)
         } catch {
@@ -592,9 +645,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWindows(_ rest: [String]) {
-        guard let appSpec = rest.first else { usage() }
+        let pos = scanJSON(rest)
+        guard let appSpec = pos.first else { usage() }
         do {
             let result = try GhostHands.windows(appSpec: appSpec)
+            if jsonMode {
+                JSONResult.fromWindows(result).emit()
+                return
+            }
             for (i, w) in result.windows.enumerated() {
                 print(reportWindowLine(index: i, window: w))
             }
@@ -626,8 +684,13 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWindow(_ rest: [String]) {
-        guard let sub = rest.first else { usage() }
-        let tail = Array(rest.dropFirst())
+        // Strip `--json` (in any order) BEFORE reading the sub-verb so
+        // `window --json raise` and `window raise --json` are equivalent. Leaf
+        // runners re-scan the tail; `scanJSON` is idempotent, so the second pass
+        // is a no-op for `--json` and harmless.
+        let scanned = scanJSON(rest)
+        guard let sub = scanned.first else { usage() }
+        let tail = Array(scanned.dropFirst())
         switch sub {
         case "move": runWindowMove(tail)
         case "resize": runWindowResize(tail)
@@ -656,14 +719,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWindowMove(_ rest: [String]) {
-        let (selector, pos) = parseWindowSelector(rest)
+        let (selector, pos) = parseWindowSelector(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         guard let x = Double(pos[0]) else { failBadCoord("window move", pos[0]) }
         guard let y = Double(pos[1]) else { failBadCoord("window move", pos[1]) }
         let appSpec = pos[2]
         do {
             let outcome = try GhostHands.windowMove(x: x, y: y, appSpec: appSpec, selector: selector)
-            print(reportWindowMutate(outcome))
+            if jsonMode { JSONResult.fromWindowMutate(outcome).emit() }
+            else { print(reportWindowMutate(outcome)) }
         } catch let error as GhostHandsError {
             fail("window move", error)
         } catch {
@@ -673,14 +737,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWindowResize(_ rest: [String]) {
-        let (selector, pos) = parseWindowSelector(rest)
+        let (selector, pos) = parseWindowSelector(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         guard let w = Double(pos[0]) else { failBadCoord("window resize", pos[0]) }
         guard let h = Double(pos[1]) else { failBadCoord("window resize", pos[1]) }
         let appSpec = pos[2]
         do {
             let outcome = try GhostHands.windowResize(w: w, h: h, appSpec: appSpec, selector: selector)
-            print(reportWindowMutate(outcome))
+            if jsonMode { JSONResult.fromWindowMutate(outcome).emit() }
+            else { print(reportWindowMutate(outcome)) }
         } catch let error as GhostHandsError {
             fail("window resize", error)
         } catch {
@@ -690,11 +755,12 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWindowRaise(_ rest: [String]) {
-        let (selector, pos) = parseWindowSelector(rest)
+        let (selector, pos) = parseWindowSelector(scanJSON(rest))
         guard let appSpec = pos.first else { usage() }
         do {
             let outcome = try GhostHands.windowRaise(appSpec: appSpec, selector: selector)
-            print(reportWindowRaise(outcome))
+            if jsonMode { JSONResult.fromWindowRaise(outcome).emit() }
+            else { print(reportWindowRaise(outcome)) }
         } catch let error as GhostHandsError {
             fail("window raise", error)
         } catch {
@@ -778,21 +844,26 @@ struct GhostHandsCLI {
     static func runExtract(_ rest: [String]) {
         // Accept flags in any order: `--in <name>` (consumes the next token); the
         // first leftover positional is the app spec. Mirrors the scroll `--in` loop.
+        let scanned = scanJSON(rest)
         var appSpec: String?
         var container: String?
         var i = 0
-        while i < rest.count {
-            if rest[i] == "--in", i + 1 < rest.count {
-                container = rest[i + 1]
+        while i < scanned.count {
+            if scanned[i] == "--in", i + 1 < scanned.count {
+                container = scanned[i + 1]
                 i += 2
             } else {
-                if appSpec == nil { appSpec = rest[i] }
+                if appSpec == nil { appSpec = scanned[i] }
                 i += 1
             }
         }
         guard let appSpec else { usage() }
         do {
             let result = try GhostHands.extract(appSpec: appSpec, container: container)
+            if jsonMode {
+                JSONResult.fromExtract(result).emit()
+                return
+            }
             let body = TableRender.render(result.model)
             if !body.isEmpty { print(body) }
             // Honest footer to stderr: the row count (header excluded), the
@@ -813,17 +884,22 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runFind(_ rest: [String]) {
-        guard rest.count >= 2 else { usage() }
-        let query = rest[0]
-        let appSpec = rest[1]
+        let pos = scanJSON(rest)
+        guard pos.count >= 2 else { usage() }
+        let query = pos[0]
+        let appSpec = pos[1]
         do {
             let outcome = try GhostHands.find(query: query, appSpec: appSpec)
             if outcome.found, let line = FindResult.report(outcome.hits) {
-                print(line)
+                if jsonMode { JSONResult.fromFind(outcome).emit() }
+                else { print(line) }
                 // exit 0 (default)
             } else {
-                // Preserve the exact original stderr wording (no "find failed:"
-                // prefix) — pass the full line verbatim, still record an artifact.
+                // A MISS is a refuse (exit 1) in BOTH modes — the SAME exit code. In
+                // --json mode the central refuse path emits a `status:"refused"`
+                // envelope; the human path keeps the exact original stderr wording
+                // (no "find failed:" prefix) — pass the full line verbatim, still
+                // record an artifact.
                 let msg = "not found: \(query.debugDescription) in \(outcome.app)"
                 refuseLine(verb: "find", message: msg, line: msg, code: 1)
             }
@@ -840,17 +916,18 @@ struct GhostHandsCLI {
     static func runWait(_ rest: [String]) {
         // Flags in any order: --gone (bool), --timeout <seconds>, --interval <ms>.
         // The remaining positionals are <name> <app>.
+        let scanned = scanJSON(rest)
         var gone = false
         var timeout: TimeInterval = 5
         var interval: TimeInterval = 0.15   // 150 ms default poll cadence
         var pos: [String] = []
         var i = 0
-        while i < rest.count {
-            switch rest[i] {
+        while i < scanned.count {
+            switch scanned[i] {
             case "--gone":
                 gone = true
             case "--timeout":
-                let raw = i + 1 < rest.count ? rest[i + 1] : nil
+                let raw = i + 1 < scanned.count ? scanned[i + 1] : nil
                 // The deadline MUST be finite and positive: a non-finite timeout
                 // (`inf`/`nan`) or a non-positive one would defeat the verb's
                 // central guarantee — a hard wall-clock wall. `inf` polls forever
@@ -861,7 +938,7 @@ struct GhostHandsCLI {
                 }
                 timeout = s; i += 1
             case "--interval":
-                let raw = i + 1 < rest.count ? rest[i + 1] : nil
+                let raw = i + 1 < scanned.count ? scanned[i + 1] : nil
                 // The poll cadence must be finite and non-negative. A negative
                 // interval is a CPU-hot busy-spin (the deadline still bounds it, but
                 // the cadence is silently not what was asked); `nan`/`inf` are
@@ -872,7 +949,7 @@ struct GhostHandsCLI {
                 }
                 interval = ms / 1000; i += 1
             default:
-                pos.append(rest[i])
+                pos.append(scanned[i])
             }
             i += 1
         }
@@ -883,7 +960,8 @@ struct GhostHandsCLI {
             let outcome = try GhostHands.wait(name: name, appSpec: appSpec,
                                               wantGone: gone, timeout: timeout,
                                               interval: interval)
-            print(reportWait(outcome))
+            if jsonMode { JSONResult.fromWait(outcome).emit() }
+            else { print(reportWait(outcome)) }
             // exit 0 — the condition was OBSERVED met.
         } catch let error as GhostHandsError {
             // A wait that times out is the EXPECTED refuse → nonzero exit (the
@@ -928,8 +1006,9 @@ struct GhostHandsCLI {
     /// be checked, e.g. a missing app — distinct from a FAIL, never a fake green).
     @MainActor
     static func runAssert(_ rest: [String]) {
-        guard let sub = rest.first else { usage() }
-        let tail = Array(rest.dropFirst())
+        let scanned = scanJSON(rest)
+        guard let sub = scanned.first else { usage() }
+        let tail = Array(scanned.dropFirst())
 
         // Build the assertion KIND from the sub-verb + its positionals. The app
         // spec is always the positional right after the name (mirroring the other
@@ -950,11 +1029,16 @@ struct GhostHandsCLI {
         case "count":
             guard tail.count >= 3 else { usage() }
             // A non-numeric count is a USAGE error (exit 2) — refuse to run a
-            // malformed assertion rather than coerce a garbage count.
+            // malformed assertion rather than coerce a garbage count. Exit 2 is
+            // UNCHANGED in both modes; --json emits a refused envelope instead.
             guard let n = Int(tail[2]), n >= 0 else {
-                let msg = "assert failed: \(tail[2].debugDescription) is not a valid "
-                    + "count (expected a non-negative integer)\n"
-                FileHandle.standardError.write(Data(msg.utf8))
+                let detail = "\(tail[2].debugDescription) is not a valid count "
+                    + "(expected a non-negative integer)"
+                if jsonMode {
+                    JSONResult.fromRefusal(verb: "assert", message: detail).emit()
+                } else {
+                    FileHandle.standardError.write(Data("assert failed: \(detail)\n".utf8))
+                }
                 exit(2)
             }
             kind = .countEquals(n); name = tail[0]; appSpec = tail[1]
@@ -965,17 +1049,29 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.assert(kind, name: name, appSpec: appSpec)
             // The verdict message goes to stdout (the harness reads it); the exit
-            // code is the machine signal. PASS → 0, FAIL → 1.
-            print("\(outcome.message) in \(outcome.app)")
+            // code is the machine signal. PASS → 0, FAIL → 1 — UNCHANGED in both
+            // modes. --json carries the SAME pass/fail verdict + message.
+            if jsonMode { JSONResult.fromAssert(outcome).emit() }
+            else { print("\(outcome.message) in \(outcome.app)") }
             exit(outcome.passed ? 0 : 1)
         } catch let error as GhostHandsError {
             // A REFUSE: the app/element could not be read, or a value assertion was
             // ambiguous — the assertion could not be CHECKED. Exit 2 (distinct from
-            // a FAIL), never a fake green.
-            FileHandle.standardError.write(Data("assert failed: \(error)\n".utf8))
+            // a FAIL), never a fake green. Exit 2 is UNCHANGED in both modes.
+            if jsonMode {
+                JSONResult.fromRefusal(verb: "assert", message: "\(error)",
+                                       app: nil, target: name).emit()
+            } else {
+                FileHandle.standardError.write(Data("assert failed: \(error)\n".utf8))
+            }
             exit(2)
         } catch {
-            FileHandle.standardError.write(Data("assert failed: unexpected error\n".utf8))
+            if jsonMode {
+                JSONResult.fromRefusal(verb: "assert", message: "unexpected error",
+                                       target: name).emit()
+            } else {
+                FileHandle.standardError.write(Data("assert failed: unexpected error\n".utf8))
+            }
             exit(2)
         }
     }
@@ -984,12 +1080,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runShot(_ rest: [String]) async {
-        guard rest.count >= 2 else { usage() }
-        let appSpec = rest[0]
-        let outPath = rest[1]
+        let pos = scanJSON(rest)
+        guard pos.count >= 2 else { usage() }
+        let appSpec = pos[0]
+        let outPath = pos[1]
         do {
             let outcome = try await GhostHands.shot(appSpec: appSpec, outPath: outPath)
-            print("wrote \(outcome.path) (\(outcome.width)×\(outcome.height))")
+            if jsonMode { JSONResult.fromShot(outcome).emit() }
+            else { print("wrote \(outcome.path) (\(outcome.width)×\(outcome.height))") }
         } catch let error as GhostHandsError {
             fail("shot", error)
         } catch {
@@ -1002,14 +1100,15 @@ struct GhostHandsCLI {
     @MainActor
     static func runClickAt(_ rest: [String]) async {
         // `--visible` may appear in any order; the rest are positional x y app.
-        let (mode, pos) = PixelFlags.parse(rest)
+        let (mode, pos) = PixelFlags.parse(scanJSON(rest))
         guard pos.count >= 3 else { usage() }
         guard let x = Double(pos[0]) else { failBadCoord("click-at", pos[0]) }
         guard let y = Double(pos[1]) else { failBadCoord("click-at", pos[1]) }
         let appSpec = pos[2]
         do {
             let outcome = try await GhostHands.clickAt(x: x, y: y, appSpec: appSpec, mode: mode)
-            print(reportPixel(outcome))
+            if jsonMode { JSONResult.fromPixel(outcome).emit() }
+            else { print(reportPixel(outcome)) }
         } catch let error as GhostHandsError {
             fail("click-at", error)
         } catch {
@@ -1033,7 +1132,7 @@ struct GhostHandsCLI {
         // instead of silently falling through to the pixel parser and printing usage.
         // Anything else (4 positionals, 6+, etc.) falls through to the pixel parser,
         // which reports the precise coord/arity error.
-        let (mode, pos) = PixelFlags.parse(rest)
+        let (mode, pos) = PixelFlags.parse(scanJSON(rest))
         if pos.count == 3 {
             await runDragElement(from: pos[0], to: pos[1], appSpec: pos[2], mode: mode)
             return
@@ -1047,7 +1146,8 @@ struct GhostHandsCLI {
         do {
             let outcome = try await GhostHands.drag(x1: x1, y1: y1, x2: x2, y2: y2,
                                                     appSpec: appSpec, mode: mode)
-            print(reportPixel(outcome))
+            if jsonMode { JSONResult.fromPixel(outcome).emit() }
+            else { print(reportPixel(outcome)) }
         } catch let error as GhostHandsError {
             fail("drag", error)
         } catch {
@@ -1064,7 +1164,9 @@ struct GhostHandsCLI {
         do {
             let outcome = try GhostHands.dragElement(from: from, to: to,
                                                      appSpec: appSpec, mode: mode)
-            print(reportDragElement(outcome))
+            // jsonMode was already set by runDrag's scanJSON before it routed here.
+            if jsonMode { JSONResult.fromDragElement(outcome).emit() }
+            else { print(reportDragElement(outcome)) }
         } catch let error as GhostHandsError {
             fail("drag", error)
         } catch {
@@ -1130,7 +1232,7 @@ struct GhostHandsCLI {
         // Flags in any order: `--visible` (REUSE PixelFlags) and `--in <name>`
         // (consumes the next token). The remaining positionals are
         // <app> <direction> [amount].
-        let (mode, afterVisible) = PixelFlags.parse(rest)
+        let (mode, afterVisible) = PixelFlags.parse(scanJSON(rest))
         var container: String?
         var pos: [String] = []
         var i = 0
@@ -1171,7 +1273,8 @@ struct GhostHandsCLI {
             let outcome = try GhostHands.scroll(appSpec: appSpec, direction: parsed.direction,
                                                 amount: parsed.amount, container: container,
                                                 mode: mode)
-            print(reportScroll(outcome))
+            if jsonMode { JSONResult.fromScroll(outcome).emit() }
+            else { print(reportScroll(outcome)) }
         } catch let error as GhostHandsError {
             fail("scroll", error)
         } catch {
@@ -1211,15 +1314,16 @@ struct GhostHandsCLI {
         // `dialog <app>` detects; `dialog <app> --click "<button>"` responds. The
         // `--click <button>` flag may appear in any order (mirrors the other flag
         // loops); the first leftover positional is the app spec.
+        let scanned = scanJSON(rest)
         var appSpec: String?
         var button: String?
         var i = 0
-        while i < rest.count {
-            if rest[i] == "--click", i + 1 < rest.count {
-                button = rest[i + 1]
+        while i < scanned.count {
+            if scanned[i] == "--click", i + 1 < scanned.count {
+                button = scanned[i + 1]
                 i += 2
             } else {
-                if appSpec == nil { appSpec = rest[i] }
+                if appSpec == nil { appSpec = scanned[i] }
                 i += 1
             }
         }
@@ -1228,10 +1332,12 @@ struct GhostHandsCLI {
         do {
             if let button {
                 let outcome = try GhostHands.dialogClick(button: button, appSpec: appSpec)
-                print(reportDialogClick(outcome))
+                if jsonMode { JSONResult.fromDialogClick(outcome).emit() }
+                else { print(reportDialogClick(outcome)) }
             } else {
                 let report = try GhostHands.dialog(appSpec: appSpec)
-                printDialogReport(report)
+                if jsonMode { JSONResult.fromDialogReport(report).emit() }
+                else { printDialogReport(report) }
             }
         } catch let error as GhostHandsError {
             fail("dialog", error)
@@ -1287,12 +1393,13 @@ struct GhostHandsCLI {
         // `--visible` may appear in any order (REUSE PixelFlags); the rest are
         // positional: <spec> [app]. The app spec is OPTIONAL — with no app we post
         // through the HID tap to the frontmost (focused) app.
-        let (mode, pos) = PixelFlags.parse(rest)
+        let (mode, pos) = PixelFlags.parse(scanJSON(rest))
         guard let spec = pos.first else { usage() }
         let appSpec = pos.count >= 2 ? pos[1] : nil
         do {
             let outcome = try GhostHands.key(spec: spec, appSpec: appSpec, mode: mode)
-            print(reportKey(outcome))
+            if jsonMode { JSONResult.fromKey(outcome).emit() }
+            else { print(reportKey(outcome)) }
         } catch let error as GhostHandsError {
             // An unknown key name is a USAGE error (exit 2), mirroring runAct's
             // `.unknownAction` wiring; a bad spec is likewise a usage error.
@@ -1337,8 +1444,13 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runClipboard(_ rest: [String]) {
-        guard let sub = rest.first else { usage() }
-        let tail = Array(rest.dropFirst())
+        // Strip `--json` (in any order) BEFORE reading the sub-verb so
+        // `clipboard --json read` and `clipboard read --json` are equivalent.
+        // Leaf runners re-scan the tail; `scanJSON` is idempotent, so the second
+        // pass is a no-op for `--json` and harmless.
+        let scanned = scanJSON(rest)
+        guard let sub = scanned.first else { usage() }
+        let tail = Array(scanned.dropFirst())
         switch sub {
         case "read": runClipboardRead(tail)
         case "write": runClipboardWrite(tail)
@@ -1351,7 +1463,12 @@ struct GhostHandsCLI {
     /// exit 0 (a blank clipboard is a real state, not a failure).
     @MainActor
     static func runClipboardRead(_ rest: [String]) {
+        _ = scanJSON(rest)   // `clipboard read [--json]` — the read takes no positionals
         let value = GhostHands.clipboardRead()
+        if jsonMode {
+            JSONResult.fromClipboardRead(value).emit()
+            return
+        }
         if let value, !value.isEmpty {
             print(value)
         } else {
@@ -1365,9 +1482,11 @@ struct GhostHandsCLI {
     /// dispatched-unverified (the set was accepted but not observed — NEVER faked).
     @MainActor
     static func runClipboardWrite(_ rest: [String]) {
-        guard let text = rest.first else { usage() }
+        let pos = scanJSON(rest)
+        guard let text = pos.first else { usage() }
         let outcome = GhostHands.clipboardWrite(text: text)
-        print(reportClipboard(outcome))
+        if jsonMode { JSONResult.fromClipboard(outcome).emit() }
+        else { print(reportClipboard(outcome)) }
         // exit 0 in both verdicts: a dispatched-unverified set is honest, not an
         // error (mirrors set-value / key) — never a nonzero "failure" for a write
         // AppKit accepted but we could not observe.
@@ -1402,19 +1521,20 @@ struct GhostHandsCLI {
     static func runInstall(_ rest: [String]) async {
         // Accept flags in any order (like snapshot/PixelFlags): --force (bool),
         // --dest <dir> (consumes the next token), first leftover positional = dmg.
+        let scanned = scanJSON(rest)
         var dmgPath: String?
         var dest: String?
         var force = false
         var i = 0
-        while i < rest.count {
-            let arg = rest[i]
+        while i < scanned.count {
+            let arg = scanned[i]
             switch arg {
             case "--force":
                 force = true
             case "--dest":
                 // consume the next token as the destination directory
-                if i + 1 < rest.count {
-                    dest = rest[i + 1]
+                if i + 1 < scanned.count {
+                    dest = scanned[i + 1]
                     i += 1
                 }
             default:
@@ -1425,7 +1545,8 @@ struct GhostHandsCLI {
         guard let dmgPath else { usage() }
         do {
             let outcome = try await GhostHands.install(dmgPath: dmgPath, dest: dest, force: force)
-            print(reportInstall(outcome))
+            if jsonMode { JSONResult.fromInstall(outcome).emit() }
+            else { print(reportInstall(outcome)) }
         } catch let error as GhostHandsError {
             fail("install", error)
         } catch {
@@ -1453,9 +1574,10 @@ struct GhostHandsCLI {
     @MainActor
     static func runReplay(_ rest: [String]) {
         // replay <flow.json> [--keep-going], flag in any order.
+        let scanned = scanJSON(rest)
         var flowPath: String?
         var keepGoing = false
-        for arg in rest {
+        for arg in scanned {
             switch arg {
             case "--keep-going": keepGoing = true
             default: if flowPath == nil { flowPath = arg }
@@ -1465,9 +1587,22 @@ struct GhostHandsCLI {
         do {
             let run = try GhostHands.replay(flowPath: flowPath, keepGoing: keepGoing) {
                 index, total, line in
-                print("step \(index)/\(total): \(line)")
+                // In --json mode stdout must be the SINGLE envelope, so the live
+                // per-step lines go to stderr (still visible, just not on stdout);
+                // the human path keeps them on stdout exactly as before.
+                if jsonMode {
+                    FileHandle.standardError.write(Data("step \(index)/\(total): \(line)\n".utf8))
+                } else {
+                    print("step \(index)/\(total): \(line)")
+                }
             }
             let s = run.summary
+            if jsonMode {
+                // The exit code is UNCHANGED — `exit(s.exitCode)` below — and the
+                // envelope mirrors it: refused>0 ⇒ status "refused".
+                JSONResult.fromReplay(run).emit()
+                exit(s.exitCode)
+            }
             // Honest summary to stderr (stdout carries the per-step verdicts).
             var note = "— \(s.executed)/\(run.total) step(s): "
                 + "\(s.verified) verified, \(s.dispatched) unverified, \(s.refused) refused"
@@ -1488,14 +1623,25 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runRecord(_ rest: [String]) {
-        // record <flow.json> <verb> <args...>
-        guard rest.count >= 2 else { usage() }
-        let flowPath = rest[0]
-        let verb = rest[1]
-        let verbArgs = Array(rest.dropFirst(2))
+        // record [--json] <flow.json> <verb> <args...>. The recorded verb's own
+        // args are positional (parseStep takes only known positionals), so a single
+        // global `--json` strip is unambiguous — none of the recordable verbs
+        // (click/type/set-value/doubleclick/act) take a `--json` arg themselves.
+        let scanned = scanJSON(rest)
+        guard scanned.count >= 2 else { usage() }
+        let flowPath = scanned[0]
+        let verb = scanned[1]
+        let verbArgs = Array(scanned.dropFirst(2))
         guard let step = parseStep(verb: verb, args: verbArgs) else { usage() }
         do {
             let run = try GhostHands.record(step, into: flowPath)
+            if jsonMode {
+                // The exit code is UNCHANGED: appended ⇒ exit 0 (fallthrough),
+                // refused ⇒ exit 1. The envelope mirrors it (status ok|refused).
+                JSONResult.fromRecord(run, flowPath: flowPath).emit()
+                if !run.appended { exit(1) }
+                return
+            }
             print(run.line)
             if run.appended {
                 FileHandle.standardError.write(
@@ -1551,7 +1697,17 @@ struct GhostHandsCLI {
     /// is fully swallowed, so it can never change the message, the exit code, or
     /// (when the env var is unset) anything at all.
     static func refuseLine(verb: String, message: String, line: String, code: Int32) -> Never {
-        FileHandle.standardError.write(Data((line + "\n").utf8))
+        // HONESTY: a refuse is a refuse in BOTH modes — the EXIT CODE is identical
+        // (`code` is passed through untouched) and the artifact hook is unchanged.
+        // The ONLY difference is the output channel/format: human mode keeps the
+        // exact stderr line; --json mode prints ONE `status:"refused"` envelope to
+        // stdout carrying the SAME message verbatim (so a machine reads the same
+        // refusal a human would). We NEVER print both.
+        if jsonMode {
+            JSONResult.fromRefusal(verb: verb, message: message).emit()
+        } else {
+            FileHandle.standardError.write(Data((line + "\n").utf8))
+        }
         FailureArtifact.recordBlocking(
             verb: verb, argv: CommandLine.arguments, errorMessage: message,
             exitCode: code)
@@ -1625,6 +1781,12 @@ struct GhostHandsCLI {
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
           ghosthands version
+
+          --json works on EVERY verb: emit ONE machine-readable JSON envelope to stdout instead of the
+            human line, with the SAME honesty — { verb, status, app?, target?, evidence?, value?, fields{}, error? }
+            where status = verified | dispatched | ok | pass | fail | refused. It mirrors the human verdict
+            EXACTLY (a dispatched action never becomes verified) and the EXIT CODE is identical in both modes.
+            (Exception: `snapshot --json` keeps its established AX-tree JSON dump — its pre-existing machine format.)
 
           <action> for `act` = open | confirm | pick | show-menu | cancel | raise | increment | decrement
 
