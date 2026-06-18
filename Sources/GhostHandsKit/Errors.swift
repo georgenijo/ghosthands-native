@@ -52,6 +52,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     case pointOutsideWindow(point: String, window: String, app: String)
     /// A pixel coordinate argument did not parse as a number.
     case badCoordinate(String)
+    /// `web tabs` could not read a tab strip — the browser exposes no AXTabGroup
+    /// (or it lists no tabs) on the AX tree. We REFUSE rather than guess a tab
+    /// list (the web tier's honesty boundary for tab enumeration).
+    case tabsNotExposed(app: String)
 
     public var description: String {
         switch self {
@@ -104,6 +108,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "to poke a location that is not on the target window"
         case let .badCoordinate(raw):
             return "\(raw.debugDescription) is not a valid coordinate (expected a number)"
+        case let .tabsNotExposed(app):
+            return "no tab strip exposed on the AX tree in \(app) — the browser "
+                + "does not advertise an AXTabGroup of tabs (refusing to guess a "
+                + "tab list)"
         }
     }
 }
