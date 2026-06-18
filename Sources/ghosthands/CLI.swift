@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import GhostHandsKit
 
@@ -33,6 +34,10 @@ struct GhostHandsCLI {
             runAct(Array(args.dropFirst()))
         case "web":
             runWeb(Array(args.dropFirst()))
+        case "windows":
+            runWindows(Array(args.dropFirst()))
+        case "window":
+            runWindow(Array(args.dropFirst()))
         case "snapshot":
             runSnapshot(Array(args.dropFirst()))
         case "find":
@@ -239,6 +244,158 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("web tabs")
         }
+    }
+
+    // MARK: - windows (read)
+
+    @MainActor
+    static func runWindows(_ rest: [String]) {
+        guard let appSpec = rest.first else { usage() }
+        do {
+            let result = try GhostHands.windows(appSpec: appSpec)
+            for (i, w) in result.windows.enumerated() {
+                print(reportWindowLine(index: i, window: w))
+            }
+            FileHandle.standardError.write(
+                Data("— \(result.count) window(s) in \(result.app)\n".utf8))
+        } catch let error as GhostHandsError {
+            fail("windows", error)
+        } catch {
+            failUnexpected("windows")
+        }
+    }
+
+    /// One honest line per window: id, title, frame, display, and the AX flags.
+    /// A nil id/title/display is shown as unknown ('?' / '(untitled)'), never faked.
+    static func reportWindowLine(index: Int, window w: WindowInfo) -> String {
+        let id = w.id.map(String.init) ?? "?"
+        let title = (w.title?.isEmpty == false) ? w.title!.debugDescription : "(untitled)"
+        let f = w.frame
+        let frame = "(\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))×\(Int(f.height)))"
+        let display = w.screenIndex.map(String.init) ?? "off-screen"
+        var flags = ""
+        if w.isMain { flags += " [main]" }
+        if w.isFocused { flags += " [focused]" }
+        if w.minimized { flags += " [minimized]" }
+        return "[#\(index)] id=\(id) \(title)  \(frame)  display \(display)\(flags)"
+    }
+
+    // MARK: - window (move | resize | raise)
+
+    @MainActor
+    static func runWindow(_ rest: [String]) {
+        guard let sub = rest.first else { usage() }
+        let tail = Array(rest.dropFirst())
+        switch sub {
+        case "move": runWindowMove(tail)
+        case "resize": runWindowResize(tail)
+        case "raise": runWindowRaise(tail)
+        default: usage()
+        }
+    }
+
+    /// Scan `--window <id|title>` out of the args (in any order) and return the
+    /// remaining positionals in order, mirroring the snapshot/replay flag loops.
+    static func parseWindowSelector(_ args: [String]) -> (selector: WindowSelector?, positional: [String]) {
+        var selector: WindowSelector?
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            if args[i] == "--window", i + 1 < args.count {
+                selector = WindowSelector.parse(args[i + 1])
+                i += 2
+            } else {
+                positional.append(args[i])
+                i += 1
+            }
+        }
+        return (selector, positional)
+    }
+
+    @MainActor
+    static func runWindowMove(_ rest: [String]) {
+        let (selector, pos) = parseWindowSelector(rest)
+        guard pos.count >= 3 else { usage() }
+        guard let x = Double(pos[0]) else { failBadCoord("window move", pos[0]) }
+        guard let y = Double(pos[1]) else { failBadCoord("window move", pos[1]) }
+        let appSpec = pos[2]
+        do {
+            let outcome = try GhostHands.windowMove(x: x, y: y, appSpec: appSpec, selector: selector)
+            print(reportWindowMutate(outcome))
+        } catch let error as GhostHandsError {
+            fail("window move", error)
+        } catch {
+            failUnexpected("window move")
+        }
+    }
+
+    @MainActor
+    static func runWindowResize(_ rest: [String]) {
+        let (selector, pos) = parseWindowSelector(rest)
+        guard pos.count >= 3 else { usage() }
+        guard let w = Double(pos[0]) else { failBadCoord("window resize", pos[0]) }
+        guard let h = Double(pos[1]) else { failBadCoord("window resize", pos[1]) }
+        let appSpec = pos[2]
+        do {
+            let outcome = try GhostHands.windowResize(w: w, h: h, appSpec: appSpec, selector: selector)
+            print(reportWindowMutate(outcome))
+        } catch let error as GhostHandsError {
+            fail("window resize", error)
+        } catch {
+            failUnexpected("window resize")
+        }
+    }
+
+    @MainActor
+    static func runWindowRaise(_ rest: [String]) {
+        let (selector, pos) = parseWindowSelector(rest)
+        guard let appSpec = pos.first else { usage() }
+        do {
+            let outcome = try GhostHands.windowRaise(appSpec: appSpec, selector: selector)
+            print(reportWindowRaise(outcome))
+        } catch let error as GhostHandsError {
+            fail("window raise", error)
+        } catch {
+            failUnexpected("window raise")
+        }
+    }
+
+    /// Honest one-liner for move/resize. VERIFIED quotes before → after frame;
+    /// CLAMPED says the OS constrained it to the ACTUAL landing (honest dispatched,
+    /// exit 0); DISPATCHED says AX accepted but the value is unchanged (effect
+    /// unverified). Never a fake success.
+    static func reportWindowMutate(_ o: WindowMutateOutcome) -> String {
+        let who = windowLabel(title: o.windowTitle, id: o.windowID, app: o.app)
+        let before = rectStr(o.frameBefore)
+        let after = rectStr(o.frameAfter)
+        if o.verified {
+            return "\(o.verb) \(who) — verified: \(before) → \(after)"
+        }
+        if o.clamped {
+            return "\(o.verb) \(who) — AX accepted; OS constrained to \(after) "
+                + "(requested elsewhere — effect partially landed, honest dispatched)"
+        }
+        let what = o.verb == "move" ? "position" : "size"
+        return "\(o.verb) \(who) — AX accepted; \(what) unchanged (\(after)) "
+            + "(effect unverified)"
+    }
+
+    /// Honest one-liner for raise — ALWAYS dispatched-unverified (z-order has no AX
+    /// read-back). Never claims app activation.
+    static func reportWindowRaise(_ o: WindowRaiseOutcome) -> String {
+        let who = windowLabel(title: o.windowTitle, id: o.windowID, app: o.app)
+        return "raise \(who) — AXRaise dispatched; stacking change not observable "
+            + "in AX (unverified, app not activated)"
+    }
+
+    static func windowLabel(title: String?, id: CGWindowID?, app: String) -> String {
+        let t = (title?.isEmpty == false) ? title!.debugDescription : "(untitled)"
+        let idPart = id.map { " id=\($0)" } ?? ""
+        return "\(t)\(idPart) in \(app)"
+    }
+
+    static func rectStr(_ r: CGRect) -> String {
+        "(\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))×\(Int(r.height)))"
     }
 
     // MARK: - snapshot
@@ -511,6 +668,10 @@ struct GhostHandsCLI {
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands web read <browser>               page-scoped digest (chrome stripped, AX only)
           ghosthands web tabs <browser>               list open tabs (* = selected); refuses if not exposed
+          ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
+          ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back
+          ghosthands window resize <w> <h> <app> [--window <id|title>]  set size (invisible AX set), verified by read-back
+          ghosthands window raise <app> [--window <id|title>]          AXRaise (stacking only) — dispatched-unverified
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
@@ -530,6 +691,10 @@ struct GhostHandsCLI {
           ghosthands snapshot Calculator --json
           ghosthands web read Brave
           ghosthands web tabs Chrome
+          ghosthands windows Finder
+          ghosthands window move 100 80 Calculator
+          ghosthands window resize 800 600 Notes --window "Untitled"
+          ghosthands window raise Preview --window 12345
           ghosthands find "7" Calculator
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
@@ -547,6 +712,19 @@ struct GhostHandsCLI {
             back, so a set cannot be verified.
           - act/doubleclick verify by read-back where observable; actions with no in-AX
             observable (e.g. raise, show-menu) land as dispatched-unverified, never faked.
+          - windows is a pure read (no focus steal, no AXRaise); a nil window id/title/
+            display is reported as unknown ('?' / off-screen), never fabricated.
+          - window move/resize set an AX attribute INVISIBLY (cursor-less, no focus steal,
+            no app activation) then RE-READ position/size: VERIFIED only when the read-back
+            lands within tolerance of the target; if the OS CLAMPS it (min size, off-screen
+            guard, full-screen/zoomed windows that ignore the set) the ACTUAL landed frame is
+            reported as dispatched (honest, never a fake verified, never a refuse); an
+            AX-accepted-but-unchanged set is dispatched-unverified.
+          - window raise is AXRaise — a STACKING change only. z-order has no AX read-back, so
+            it is ALWAYS dispatched-unverified; it does NOT activate the app or steal focus
+            (we use the raw raise, not focusWindow/showWindow). A rejected raise REFUSES.
+          - window move/resize/raise REFUSE when the app has >1 window and no --window
+            selector (mirroring click's ambiguous refuse), rather than mutate window[0].
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
           - click-at / drag are the PIXEL tier (no AX element; coords from the caller).
