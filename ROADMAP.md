@@ -63,11 +63,11 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Refuse on ambiguity (don't guess the wrong control) | ❌ | ❌ | ✅ | ✅ | done (M1) |
 | Read the screen (snapshot / find / screenshot) | ✅ | ✅ | ✅ | ✅ | done (M2) |
 | Prove effects (effect-witness: read a sibling, e.g. the display) | ~ | ❌(AI guess) | ✅ | ✅ | done (M2) |
-| Type text (honest: set-value + verify it changed) | ❌ | ✅ | ❌ | ✅ | M3 |
-| Double-click / open files / NSOpenPanel dialogs | ✅ | ✅ | ❌ | ✅ | M3 |
-| Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ❌ | ✅ | M3 |
-| Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ❌ | ✅ | M3 |
-| record / replay a flow (no model) | ✅ | ❌ | ❌ | ✅ | M3 |
+| Type text (honest: set-value + verify it changed) | ❌ | ✅ | ✅ | ✅ | done (M3) |
+| Double-click / open files / NSOpenPanel dialogs | ✅ | ✅ | ✅ | ✅ | done (M3) |
+| Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ✅ | ✅ | done (M3) |
+| Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ✅ | ✅ | done (M3) |
+| record / replay a flow (no model) | ✅ | ❌ | ❌ | ✅ | M3 (pass-2) |
 | Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
 | Drag-and-drop (install app: DMG → Applications) | ❌ | ✅ | ❌ | ✅ | M4 |
 | Multi-monitor + window identity/management | ❌ | ✅ | ❌ | ✅ | M4 |
@@ -92,9 +92,22 @@ hands + eyes; whoever plugs in brings the brain.
   structural keys) so it never over-claims. Done: live-verified on a backgrounded
   Calculator + 69 hermetic tests. (M5 backlog: bound AX calls — `searchElements`
   can hang on a degraded AX subsystem.)
-- **M3 — More actions** *(Layer 1).* `type` (AX set-value, verify the value
-  changed — never the old keystroke no-op), `doubleclick`, `set-value` for
-  checkbox/slider/dropdown, the named AX actions, and record/replay.
+- **M3 — More actions** ✅ *(Layer 1, mutating verbs on the shared honesty core).*
+  `type` (AX set-value then **read the value back** — never the keystroke no-op;
+  a set the field accepts but doesn't hold is honest DISPATCHED-UNVERIFIED, never
+  success; a secure field is REFUSED as unverifiable), `set-value` for
+  checkbox/slider/dropdown (value type-COERCED, uncoercible REFUSED), `doubleclick`
+  (AXOpen-preferred), and the named AX actions (`act open|confirm|pick|show-menu|
+  cancel|raise|increment|decrement`, advertise-check pre-gate, increment/decrement
+  verified by numeric direction). All four share one `EffectProbe`
+  (window-pinned + settle-twice witness fence, extracted from the click path) and
+  refuse on not-found / ambiguous / AX-reject. Done: 120 hermetic tests, adversarial
+  honesty review, and `type` live-verified on a backgrounded TextEdit
+  (`value "…" → "VERIFIED-LIVE-0618"`, world-checked via an independent cua read,
+  app `active:false`). Live-verify also surfaced + fixed a real read bug —
+  `AXTextArea`/`AXTextField` values read back as nil (so `type` could never verify
+  a real set, and `snapshot`/`find` missed field contents); fixed with a raw
+  `AXUIElementCopyAttributeValue` fallback. **record/replay deferred to M3 pass-2.**
 - **M4 — Hard surfaces** *(Layer 1, the credibility 20%).* Menu bar / Control
   Center, drag-and-drop (the "install an app" demo — prefer `cp -R` over GUI
   drag when possible), multi-monitor + window management, web tier.

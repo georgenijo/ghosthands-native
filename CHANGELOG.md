@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.3.0-m3 — 2026-06-18
+
+More actions. Four mutating verbs on one shared honesty core — every one proves
+its effect by reading the world back, or says it couldn't.
+
+**Added**
+- `ghosthands type "<text>" "<field>" <app>` — set a text-entry control's value
+  via AX (cursor-less, no synthetic keystrokes), then RE-READ it off a fresh
+  tree. **VERIFIED** only when the field reads back as the text (or demonstrably
+  changed); a set the AX layer accepts but that does NOT change the value is
+  reported **dispatched-unverified** (the no-op trap — never success); a secure
+  (password) field is **REFUSED** up front, because an unreadable value can never
+  be verified.
+- `ghosthands set-value "<value>" "<control>" <app>` — checkbox / switch / radio
+  / slider / stepper / popup. The value is type-**coerced** to the control
+  (on/off → 1/0, numeric for sliders, string for popups); an uncoercible request
+  (e.g. `"banana"` for a slider) **REFUSES** rather than set a wrong value.
+  Verified by the same value-read-back, with the M2 sibling-witness fallback for
+  opaque controls.
+- `ghosthands doubleclick "<name>" <app>` — open a row / cell / file. Prefers the
+  `AXOpen` action (the AX double-click equivalent), falls back to `AXPress`,
+  REFUSES if the control advertises neither. Verified by read-back / witness.
+- `ghosthands act <action> "<name>" <app>` — invoke a named AX action:
+  `open | confirm | pick | show-menu | cancel | raise | increment | decrement`.
+  The control must **advertise** the action (pre-checked — wrong action REFUSES
+  early with the supported list); an unknown friendly name is a usage error
+  (exit 2). `increment`/`decrement` are VERIFIED by NUMERIC DIRECTION (a value
+  that saturated at a bound is honest dispatched, not a faked success); actions
+  with no in-AX observable (`raise`, `show-menu`) land as dispatched-unverified,
+  never fabricated.
+- **`EffectProbe`** — the M2 effect-witness machinery (window-pinned by
+  CGWindowID, settle-twice causation fence, demote-on-2+) extracted into one
+  audited place so all mutating verbs (click / type / set-value / doubleclick /
+  act) share the SAME false-positive defences instead of re-deriving them. `click`
+  was refactored onto it with no behaviour change.
+- Pure, hermetically-tested verdict logic: `ValueVerdict` (the no-op-fakes-success
+  guard for type/set-value), `DirectionVerdict` (increment/decrement), `ValueCoercion`
+  (coerce-or-refuse), `ActionName` (friendly→AX map). 120 hermetic tests total
+  (+51), all fabricated facts — no live app driven.
+
+**Fixed**
+- **Honest read of text controls.** `AXTextArea` / `AXTextField` values read back
+  as `nil` through AXorcist's generic `value()` (its `Any`-typed convert step
+  drops a plain CFString). That silently broke verification — a `type` that
+  genuinely landed read the field back empty and under-claimed
+  dispatched-unverified — and hid field contents from `snapshot` / `find`. Now
+  reads fall back to the raw `AXUIElementCopyAttributeValue` (the path a screen
+  reader uses) when the typed read is nil; the fallback only fires on nil, so no
+  M2 control changes. Caught by live-verify, not the unit tests.
+- **Read-back gate matches the resolve gate.** `doubleclick`/`act` re-read the
+  control through the SAME candidate gate they resolved it with (`isOpenable` /
+  `isSettable`), threaded through `performAndVerify`. A hardcoded narrower gate
+  would have made an opened `AXRow` invisible to its own read-back → a false
+  "no longer present" VERIFIED. Found by adversarial review; fixed before ship.
+
+**Verified** live against a backgrounded TextEdit (world-checked via an
+independent cua read): `type "VERIFIED-LIVE-0618"` reports
+`verified: value "…" → "VERIFIED-LIVE-0618"`, the field independently reads back
+as exactly that, the app stays `active:false`, and `type` issues no pointer
+events (pure AX set-value — the cursor is never touched). The first attempt
+honestly reported dispatched-unverified on a control whose value AX would not
+hand back — the cardinal-sin guard working before the read-fix made the value
+observable. set-value / doubleclick / act share this live-proven core and are
+hermetically covered.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.2.0-m2 — 2026-06-17
 
 Read + Prove. The eyes, and the honesty finisher for `click`.

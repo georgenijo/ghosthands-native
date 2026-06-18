@@ -17,6 +17,26 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     case ambiguousMatch(name: String, candidates: [String])
     /// The element was found but rejected the AX action (no-op at the AX layer).
     case actionRejected(name: String, action: String)
+    /// A `type` was requested into a secure (password) text field. Its value
+    /// cannot be read back, so a successful set can NEVER be verified — we refuse
+    /// to claim an unverifiable success rather than silently set a password.
+    case secureFieldUnverifiable(name: String)
+    /// A `set-value` requested a value the control's type cannot honestly hold —
+    /// e.g. "banana" for a slider, or an arbitrary string for a checkbox. We
+    /// refuse rather than coerce to a wrong value.
+    case valueUncoercible(value: String, role: String)
+    /// An `act` requested an action the control does not advertise. We refuse
+    /// early (rather than throw-and-guess) and report what IS supported.
+    case wrongActionForControl(name: String, action: String, supported: [String])
+    /// An `act` was given a friendly action name that is not in the known set —
+    /// a usage-class error (exit 2), distinct from a control that rejects a known
+    /// action.
+    case unknownAction(String)
+    /// A `set-value`/`type` dispatched (AX accepted) but the read-back showed NO
+    /// observable change — the no-op trap. We REFUSE to claim success on a no-op.
+    /// (The CLI may instead choose to report this as dispatched-unverified; this
+    /// case exists for verbs that treat an unverified set as a hard refuse.)
+    case valueUnchanged(name: String, value: String?)
     /// Screen Recording permission not granted — `shot` REFUSES rather than
     /// write the black image the OS hands back without the grant.
     case screenRecordingNotTrusted
@@ -46,6 +66,24 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .actionRejected(name, action):
             return "\(action) rejected by \(name.debugDescription) — element "
                 + "found but did not accept the action"
+        case let .secureFieldUnverifiable(name):
+            return "\(name.debugDescription) is a secure text field — its value "
+                + "cannot be read back, so a successful set cannot be verified "
+                + "(refusing to claim an unverifiable success)"
+        case let .valueUncoercible(value, role):
+            return "\(value.debugDescription) cannot be set on a \(role) — the "
+                + "value is not valid for this control's type"
+        case let .wrongActionForControl(name, action, supported):
+            let list = supported.isEmpty ? "none" : supported.joined(separator: ", ")
+            return "\(name.debugDescription) does not support \(action) "
+                + "(supported: \(list)) — wrong action for this control"
+        case let .unknownAction(action):
+            return "unknown action \(action.debugDescription) — use one of "
+                + "\(ActionName.known)"
+        case let .valueUnchanged(name, value):
+            let was = value.map { $0.debugDescription } ?? "empty"
+            return "set of \(name.debugDescription) was accepted by AX but the "
+                + "value did not change (still \(was)) — no observable effect"
         case .screenRecordingNotTrusted:
             return "Screen Recording not granted — enable 'ghosthands' (or the "
                 + "launching terminal) in System Settings ▸ Privacy & Security ▸ "

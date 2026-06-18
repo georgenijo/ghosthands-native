@@ -2,5 +2,5 @@
 // hands core (resolve → find → act → verify) lands here.
 
 public enum GhostHands {
-    public static let version = "0.2.0-m2"
+    public static let version = "0.3.0-m3"
 }

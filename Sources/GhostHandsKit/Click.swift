@@ -160,64 +160,32 @@ extension GhostHands {
 
         let role = facts.role ?? "AXUnknown"
         let before = facts.value
-        // Value-inclusive identity is still used to re-locate the witness window;
-        // the structural read-back uses the value-EXCLUDED stable key so a value
+        // The structural read-back uses the value-EXCLUDED stable key so a value
         // flip doesn't read as a disappearance.
-        let identity = NameMatch.identityKey(facts)
         let stableIdentity = NameMatch.stableIdentityKey(facts)
 
         // BEFORE the press: snapshot value-bearing witnesses scoped to the
         // pressed control's enclosing window subtree (so an unrelated window or
-        // the menu-bar clock can never become false evidence). We also pin that
-        // window's stable CGWindowID so the AFTER walk re-reads the SAME window
-        // by identity — never a positional "window 0" fallback, which on a
+        // the menu-bar clock can never become false evidence). The probe pins
+        // that window's stable CGWindowID so the AFTER walk re-reads the SAME
+        // window by identity — never a positional "window 0" fallback, which on a
         // multi-window app could diff witnesses across the WRONG window and
-        // fabricate a change our press never caused. If we can't resolve a
-        // window id the witness set is abandoned (self-only verification — the
-        // honest under-claim).
-        let windowResolver = AXWindowResolver()
-        let witnessWindow = Finder.enclosingWindow(of: element)
-        let beforeWindowID = witnessWindow.flatMap { windowResolver.windowID(from: $0) }
-        let witnessesBefore = witnessWindow.map { Finder.witnesses(in: $0) } ?? []
+        // fabricate a change our press never caused. (See EffectProbe.)
+        let probe = EffectProbe(pid: target.pid, settle: settle)
+        let witnessBeforeState = probe.captureBefore(of: element)
 
         guard element.press() else {
             throw GhostHandsError.actionRejected(name: name, action: "AXPress")
         }
 
         // Read the world back off a FRESH application element — never the stale
-        // handle we already pressed.
-        if settle > 0 { Thread.sleep(forTimeInterval: settle) }  // CLI is one-shot; main thread is free to block
-        let freshRoot = Element(AXUIElementCreateApplication(target.pid))
-
-        // Structural read-back: present (with current value) / now-disabled /
-        // absent. A bare "absent" is NOT yet evidence — the project's own AX
-        // read flakiness (EAGAIN / cold post-press tree) produces the same miss.
-        var readbackRoot = freshRoot
-
-        let readback: ClickVerdict.SelfReadback
-        switch Finder.readback(stableIdentity: stableIdentity, named: name, under: freshRoot) {
-        case let .present(f):
-            readback = .present(value: f.value)
-        case .disabled:
-            readback = .disabled
-        case .absent:
-            // CONFIRM the disappearance with a settle + second read off another
-            // fresh root, exactly as find()/snapshot() guard their empty results.
-            // Only an absence corroborated by a SECOND read is treated as the
-            // structural "gone" evidence; a one-off miss stays unconfirmed and
-            // can never, by itself, become VERIFIED.
-            if settle > 0 { Thread.sleep(forTimeInterval: settle) }
-            let secondRoot = Element(AXUIElementCreateApplication(target.pid))
-            readbackRoot = secondRoot
-            switch Finder.readback(stableIdentity: stableIdentity, named: name, under: secondRoot) {
-            case let .present(f):
-                readback = .present(value: f.value)   // it was just a flaky first read
-            case .disabled:
-                readback = .disabled
-            case .absent:
-                readback = .goneConfirmed             // absent across two reads → real
-            }
-        }
+        // handle we already pressed. A bare "absent" is NOT yet evidence — the
+        // project's own AX read flakiness (EAGAIN / cold post-press tree)
+        // produces the same miss, so the probe CONFIRMS a disappearance with a
+        // settle + second read before treating it as structural "gone".
+        let (readback, readbackRoot) =
+            probe.readbackSelf(stableIdentity: stableIdentity, named: name,
+                               accept: Finder.isActionable)
 
         // The value to REPORT as `valueAfter` is the control's current value when
         // it is still present; for disabled / gone there is no current value to
@@ -225,28 +193,9 @@ extension GhostHands {
         let after: String?
         if case let .present(value) = readback { after = value } else { after = nil }
 
-        // AFTER the press: re-collect witnesses off a FRESH tree, scoped to the
-        // SAME window (matched by the pinned CGWindowID, never a positional
-        // fallback). We read the window TWICE — `after1`, settle, `after2` — and
-        // keep only witnesses that SETTLED (same value across both reads). A
-        // press drives a result to a new, stable value; an element changing for
-        // an unrelated reason (clock / animation / in-flight scroll) keeps
-        // moving and is dropped. The diff then compares BEFORE vs the settled
-        // AFTER and demotes to DISPATCHED on zero OR 2+ changes (under-claim).
-        let witnessDiff: WitnessMatch.Verdict
-        if let beforeWindowID, !witnessesBefore.isEmpty,
-           let freshWindow = readbackRoot.windows()?
-               .first(where: { windowResolver.windowID(from: $0) == beforeWindowID }) {
-            let after1 = Finder.witnesses(in: freshWindow)
-            if settle > 0 { Thread.sleep(forTimeInterval: settle) }
-            let secondWindow = Element(AXUIElementCreateApplication(target.pid)).windows()?
-                .first(where: { windowResolver.windowID(from: $0) == beforeWindowID })
-            let after2 = secondWindow.map { Finder.witnesses(in: $0) } ?? after1
-            let settledAfter = WitnessMatch.stable(after1, after2)
-            witnessDiff = WitnessMatch.diff(before: witnessesBefore, after: settledAfter)
-        } else {
-            witnessDiff = .none
-        }
+        // AFTER the press: diff witnesses off the SAME window (settle-twice,
+        // keep-only-settled, demote-on-2+ — all inside EffectProbe.diff).
+        let witnessDiff = probe.diff(witnessBeforeState, readbackRoot: readbackRoot)
 
         let verdict = ClickVerdict.decide(selfBefore: before, readback: readback,
                                           witnessDiff: witnessDiff)

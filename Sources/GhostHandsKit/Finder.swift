@@ -24,12 +24,36 @@ func axString(_ value: Any?) -> String? {
     return String(describing: value)
 }
 
+/// Read a control's AXValue as a String, ROBUSTLY.
+///
+/// AXorcist's generic `value()` is `attribute(Attribute<Any>(kAXValue))`, whose
+/// `Any`-typed convert step returns **nil for some controls whose AXValue is a
+/// plain CFString** — notably `AXTextArea` / `AXTextField`. That silent nil is a
+/// correctness hole, not just cosmetics: `snapshot`/`find` miss a field's
+/// contents, and — worse for the honesty model — `type`/`set-value` read the
+/// field back as empty after a set that genuinely landed, so a real, verifiable
+/// change is reported as the honest-but-wrong DISPATCHED-UNVERIFIED (a false
+/// negative). We fall back to the RAW attribute copy
+/// (`AXUIElementCopyAttributeValue`, the exact path that returns the string),
+/// so a text control's value is read the same way a screen reader reads it.
+/// The fallback only fires when the typed read already yielded nil, so it never
+/// changes a control whose `value()` already worked (no M2 regression).
+@MainActor
+func axValueString(_ element: Element) -> String? {
+    if let v = axString(element.value()) { return v }
+    if let raw = element.rawAttributeValue(named: AXAttributeNames.kAXValueAttribute) {
+        return axString(raw)
+    }
+    return nil
+}
+
 /// Pure, AX-free facts about one element — the unit-testable surface of name
 /// resolution. Building these from a live `Element` is the only AX-touching
 /// step; the matching/scoring/resolution below is pure, so it is tested with
 /// no app driven.
 public struct ElementFacts: Sendable, Equatable {
     public var role: String?
+    public var subrole: String?
     public var title: String?
     public var identifier: String?
     public var value: String?
@@ -37,12 +61,18 @@ public struct ElementFacts: Sendable, Equatable {
     public var descriptionText: String?
     public var supportsPress: Bool
     public var enabled: Bool?
+    /// The control's full advertised AX action list (e.g. ["AXPress","AXShowMenu"]).
+    /// Used by `act` for the pre-check (REFUSE if the requested action is absent)
+    /// and by `doubleclick` to prefer AXOpen. May be empty when AX returns nil.
+    public var supportedActions: [String]
 
-    public init(role: String? = nil, title: String? = nil, identifier: String? = nil,
-                value: String? = nil, roleDescription: String? = nil,
-                descriptionText: String? = nil, supportsPress: Bool = false,
-                enabled: Bool? = nil) {
+    public init(role: String? = nil, subrole: String? = nil, title: String? = nil,
+                identifier: String? = nil, value: String? = nil,
+                roleDescription: String? = nil, descriptionText: String? = nil,
+                supportsPress: Bool = false, enabled: Bool? = nil,
+                supportedActions: [String] = []) {
         self.role = role
+        self.subrole = subrole
         self.title = title
         self.identifier = identifier
         self.value = value
@@ -50,7 +80,17 @@ public struct ElementFacts: Sendable, Equatable {
         self.descriptionText = descriptionText
         self.supportsPress = supportsPress
         self.enabled = enabled
+        self.supportedActions = supportedActions
     }
+
+    /// True iff the control advertises a named AX action — the honest pre-check
+    /// for `act`/`doubleclick` (gate BEFORE dispatch, never throw-and-guess).
+    public func supports(_ action: String) -> Bool { supportedActions.contains(action) }
+    /// Convenience: advertises AXOpen (the AX double-click equivalent).
+    public var supportsOpen: Bool { supportedActions.contains("AXOpen") }
+    /// True iff this is a password field — its value is unreadable, so a `type`
+    /// into it can never be verified (the secure-field honesty gate).
+    public var isSecureTextField: Bool { role == "AXTextField" && subrole == "AXSecureTextField" }
 }
 
 /// Pure name-matching + resolution. Prefers exact whole-string matches, refuses
@@ -159,7 +199,7 @@ enum Finder {
     /// Interactive control roles. `supportedActions()` (a generic attribute
     /// fetch) can return nil even for a genuinely pressable AXButton, so role
     /// is the reliable gate; AXPress support is a bonus, not a requirement.
-    static let controlRoles: Set<String> = [
+    nonisolated static let controlRoles: Set<String> = [
         "AXButton", "AXCheckBox", "AXRadioButton", "AXMenuButton",
         "AXPopUpButton", "AXLink", "AXDisclosureTriangle", "AXIncrementor",
         "AXSegmentedControl", "AXTab", "AXTabButton", "AXSlider", "AXStepper",
@@ -169,20 +209,59 @@ enum Finder {
     /// A candidate we may press: advertises AXPress, OR is a known control role.
     /// Excludes static text, images, groups — things that merely *contain* the
     /// query text but aren't the thing to click.
-    static func isActionable(_ facts: ElementFacts) -> Bool {
+    nonisolated static func isActionable(_ facts: ElementFacts) -> Bool {
         facts.supportsPress || (facts.role.map { controlRoles.contains($0) } ?? false)
     }
 
+    /// Text-entry roles that accept an `AXValue` STRING set — the candidate set
+    /// for `type`. These advertise NEITHER AXPress NOR a control role, so they
+    /// bypass `isActionable`/`pressableMatches`; `type` resolves over them
+    /// separately. A static label / button is NOT a text-entry control.
+    nonisolated static let textEntryRoles: Set<String> = [
+        "AXTextField", "AXTextArea", "AXComboBox", "AXSearchField",
+    ]
+
+    /// A candidate `type` may write into. Role-gated (a label that merely shares
+    /// the field's title is excluded), so the FIELD is the unique winner — not an
+    /// ambiguity false-positive against its own label.
+    nonisolated static func isTextEntry(_ facts: ElementFacts) -> Bool {
+        facts.role.map { textEntryRoles.contains($0) } ?? false
+    }
+
+    /// The `set-value` candidate set: settable value-bearing controls. A superset
+    /// of click's `controlRoles` (which already covers checkbox/switch/slider/
+    /// stepper/popup) PLUS the text-entry roles (a combo box / text field also
+    /// takes set-value). A static label is excluded — only real controls.
+    nonisolated static func isSettable(_ facts: ElementFacts) -> Bool {
+        isActionable(facts) || isTextEntry(facts)
+    }
+
+    /// The `doubleclick` candidate set: rows / cells / files that OPEN on a
+    /// double-click. Widened beyond `isActionable` to include AXRow / AXCell and
+    /// text-field file rows (NSOpenPanel exposes a file as an AXTextField with an
+    /// AXOpen action but no AXPress). A plain static label is still excluded.
+    nonisolated static let openableRoles: Set<String> = [
+        "AXRow", "AXCell", "AXTextField", "AXOutline", "AXList",
+    ]
+    nonisolated static func isOpenable(_ facts: ElementFacts) -> Bool {
+        isActionable(facts)
+            || (facts.role.map { openableRoles.contains($0) } ?? false)
+            || facts.supportsOpen
+    }
+
     static func facts(of element: Element) -> ElementFacts {
-        ElementFacts(
+        let actions = element.supportedActions() ?? []
+        return ElementFacts(
             role: element.role(),
+            subrole: element.subrole(),
             title: element.title(),
             identifier: element.identifier(),
-            value: axString(element.value()),
+            value: axValueString(element),
             roleDescription: element.roleDescription(),
             descriptionText: element.descriptionText(),
-            supportsPress: element.supportedActions()?.contains("AXPress") ?? false,
-            enabled: element.isEnabled())
+            supportsPress: actions.contains("AXPress"),
+            enabled: element.isEnabled(),
+            supportedActions: actions)
     }
 
     private static func options() -> ElementSearchOptions {
@@ -192,11 +271,21 @@ enum Finder {
         return o
     }
 
-    /// (element, facts) for every actionable control matching `name`.
-    static func pressableMatches(named name: String, under root: Element) -> [(Element, ElementFacts)] {
+    /// (element, facts) for every control matching `name` that passes `accept`.
+    /// `accept` is the candidate-set gate — `isActionable` for click, `isTextEntry`
+    /// for type, `isSettable` for set-value, `isOpenable` for doubleclick — so all
+    /// four verbs share one search/refind/readback core, differing only in which
+    /// roles count as a candidate.
+    static func candidateMatches(named name: String, under root: Element,
+                                 accept: (ElementFacts) -> Bool) -> [(Element, ElementFacts)] {
         root.searchElements(matching: name, options: options())
             .map { ($0, facts(of: $0)) }
-            .filter { isActionable($0.1) }
+            .filter { accept($0.1) }
+    }
+
+    /// (element, facts) for every actionable control matching `name`.
+    static func pressableMatches(named name: String, under root: Element) -> [(Element, ElementFacts)] {
+        candidateMatches(named: name, under: root, accept: isActionable)
     }
 
     enum Resolved {
@@ -205,8 +294,12 @@ enum Finder {
         case none
     }
 
-    static func resolve(named name: String, under root: Element) -> Resolved {
-        let pairs = pressableMatches(named: name, under: root)
+    /// Resolve over an arbitrary candidate gate (click uses the `isActionable`
+    /// default; type/set-value/doubleclick pass their widened gate). Ambiguity
+    /// (>1 distinct control) is refused exactly as in the click path.
+    static func resolve(named name: String, under root: Element,
+                        accept: (ElementFacts) -> Bool = isActionable) -> Resolved {
+        let pairs = candidateMatches(named: name, under: root, accept: accept)
         switch NameMatch.resolve(pairs.map { $0.1 }, query: name) {
         case let .unique(i): return .element(pairs[i].0, pairs[i].1)
         case let .ambiguous(labels): return .ambiguous(labels)
@@ -216,8 +309,9 @@ enum Finder {
 
     /// Re-find the SAME logical control (by identity) on a fresh snapshot, so
     /// the read-back reads the world, not the stale handle we already pressed.
-    static func refind(identity key: String, named name: String, under root: Element) -> Element? {
-        for (element, facts) in pressableMatches(named: name, under: root)
+    static func refind(identity key: String, named name: String, under root: Element,
+                       accept: (ElementFacts) -> Bool = isActionable) -> Element? {
+        for (element, facts) in candidateMatches(named: name, under: root, accept: accept)
         where NameMatch.identityKey(facts) == key {
             return element
         }
@@ -254,15 +348,16 @@ enum Finder {
     /// AND disabled so a self-disable is reported as `disabled`, never as a
     /// false `absent`. Keyed without value so a legitimate value flip does not
     /// read as a disappearance.
-    static func readback(stableIdentity key: String, named name: String, under root: Element) -> Readback {
+    static func readback(stableIdentity key: String, named name: String, under root: Element,
+                         accept: (ElementFacts) -> Bool = isActionable) -> Readback {
         var bestDisabled: ElementFacts?
         for element in root.searchElements(matching: name, options: readbackOptions()) {
             let f = facts(of: element)
-            guard isActionable(f), NameMatch.stableIdentityKey(f) == key else { continue }
+            guard accept(f), NameMatch.stableIdentityKey(f) == key else { continue }
             if f.enabled == false {
                 bestDisabled = f          // remember, but keep looking for an enabled twin
             } else {
-                return .present(f)        // an enabled, pressable match wins
+                return .present(f)        // an enabled, matching candidate wins
             }
         }
         if let bestDisabled { return .disabled(bestDisabled) }
@@ -332,7 +427,7 @@ enum Finder {
             // nil → "789", which `diff` reports as a genuine change. The
             // uniqueness + single-change + window-scope guards still prevent a
             // false positive (two readouts moving → ambiguous → demote).
-            let raw = axString(element.value())
+            let raw = axValueString(element)
             let value = (raw?.isEmpty == true) ? nil : raw
             let title = element.title()
             let id = element.identifier()
