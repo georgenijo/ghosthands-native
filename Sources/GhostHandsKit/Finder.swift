@@ -282,6 +282,33 @@ enum Finder {
     /// so it bounds a cycle to 100 frames and still finds every genuine control.
     static let maxSearchDepth = 100
 
+    /// A CYCLE-SAFE bounded descendant search. AXorcist's `searchElements` /
+    /// `searchElements(byRole:)` honor a `maxDepth` but carry NO visited-set, so a
+    /// HIGH-BRANCHING cyclic subtree (a node reachable by many paths that loops
+    /// back) still explodes combinatorially (≈ branching^depth) into an effective
+    /// HANG even when the depth is bounded — the depth cap stops the stack overflow
+    /// but not the blow-up. This walks `kAXChildren` with BOTH a depth cap AND a
+    /// `Set<Element>` visited guard (the Snapshot/Web/TableWalker pattern, where
+    /// `Element` hashes by the underlying AXUIElement identity), so every node is
+    /// visited at most once and a cycle terminates. Use this — NOT `searchElements`
+    /// — whenever the searched subtree might cycle (the resolve verbs' big walks).
+    @MainActor
+    static func descendants(under root: Element, maxDepth: Int = maxSearchDepth,
+                            accept: (Element) -> Bool) -> [Element] {
+        var out: [Element] = []
+        var visited = Set<Element>()
+        func walk(_ element: Element, _ depth: Int) {
+            guard depth < maxDepth, !visited.contains(element) else { return }
+            visited.insert(element)
+            if accept(element) { out.append(element) }
+            for child in element.children(strict: true) ?? [] {
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+        return out
+    }
+
     private static func options() -> ElementSearchOptions {
         var o = ElementSearchOptions()
         o.excludeRoles = excludedRoles

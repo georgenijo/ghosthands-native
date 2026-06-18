@@ -317,9 +317,11 @@ extension GhostHands {
         // `NameMatch` so >1 distinct container is AMBIGUOUS (refuse), never a
         // silent `.first`.
         if let named {
-            let matches = target.element.searchElements(
-                matching: named, options: Self.boundedSearchOptions)
-                .filter { TableShaper.tabularRoles.contains($0.role() ?? "") }
+            // Finder.descendants is CYCLE-SAFE (visited-set) — AXorcist's
+            // searchElements is not, and a cyclic content tree HANGS it.
+            let matches = Finder.descendants(under: target.element) {
+                TableShaper.tabularRoles.contains($0.role() ?? "")
+            }
             let facts = matches.map { Finder.facts(of: $0) }
             switch NameMatch.resolve(facts, query: named) {
             case let .unique(i): return matches[i]
@@ -335,9 +337,11 @@ extension GhostHands {
         // then AXList (a grid is "more tabular" than a flat list), and within a
         // role take the first in tree order — a deterministic, honest pick.
         let window = frontmostWindow(of: target) ?? target.element
+        let tabular = Finder.descendants(under: window) {
+            TableShaper.tabularRoles.contains($0.role() ?? "")
+        }
         for role in ["AXTable", "AXOutline", "AXList"] {
-            let hits = window.searchElements(byRole: role, options: Self.boundedSearchOptions)
-            if let first = hits.first { return first }
+            if let first = tabular.first(where: { $0.role() == role }) { return first }
         }
         return nil
     }
