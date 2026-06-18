@@ -303,35 +303,45 @@ struct GhostHandsCLI {
         }
     }
 
-    /// Scan `--cdp` / `--ax` / `--debug-port <N>` out of the args (in any order)
-    /// and return the lens, port, and remaining positionals — mirroring the
-    /// snapshot `--ax|--json` loop and `parseWindowSelector`. Default lens is
-    /// `.auto` (CDP-when-reachable, else AX), default port 9222.
-    static func parseWebLens(_ args: [String]) -> (lens: WebLens, port: Int, positional: [String]) {
+    /// Scan `--cdp` / `--ax` / `--debug-port <N>` / `--relaunch` out of the args
+    /// (in any order) and return the lens, port, relaunch flag, and remaining
+    /// positionals — mirroring the snapshot `--ax|--json` loop and
+    /// `parseWindowSelector`. Default lens is `.auto` (CDP-when-reachable, else
+    /// AX), default port 9222, relaunch OFF.
+    ///
+    /// `--relaunch` is the CONSENT GATE: only meaningful with `--cdp`, default OFF.
+    /// When the debug port is CLOSED and `--relaunch` is NOT given, behavior is
+    /// UNCHANGED (refuse). When given, a closed port launches a NEW, ISOLATED
+    /// throwaway browser instance for automation — never the user's real profile,
+    /// never silently.
+    static func parseWebLens(_ args: [String])
+        -> (lens: WebLens, port: Int, relaunch: Bool, positional: [String]) {
         var lens: WebLens = .auto
         var port = 9222
+        var relaunch = false
         var positional: [String] = []
         var i = 0
         while i < args.count {
             switch args[i] {
             case "--cdp": lens = .cdp; i += 1
             case "--ax": lens = .ax; i += 1
+            case "--relaunch": relaunch = true; i += 1
             case "--debug-port":
                 if i + 1 < args.count, let p = Int(args[i + 1]) { port = p; i += 2 }
                 else { i += 1 }
             default: positional.append(args[i]); i += 1
             }
         }
-        return (lens, port, positional)
+        return (lens, port, relaunch, positional)
     }
 
     @MainActor
     static func runWebRead(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         guard let browser = positional.first else { usage() }
         do {
             let (result, served) = try await GhostHands.webRead(
-                browser: browser, lens: lens, debugPort: port)
+                browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
             let body = WebDigest.render(result.entries)
             if !body.isEmpty { print(body) }
             // Honest footer to stderr: distinguish "no page surface" from a page
@@ -355,11 +365,11 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebTabs(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         guard let browser = positional.first else { usage() }
         do {
             let (result, served) = try await GhostHands.webTabs(
-                browser: browser, lens: lens, debugPort: port)
+                browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
             for tab in result.tabs {
                 let mark = tab.selected ? "* " : "  "
                 print(mark + tab.title)
@@ -385,14 +395,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebClick(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         // web click <selector> <browser>
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
         let browser = positional[1]
         do {
             let result = try await GhostHands.webClick(
-                selector: selector, browser: browser, lens: lens, debugPort: port)
+                selector: selector, browser: browser, lens: lens, debugPort: port,
+                relaunch: relaunch)
             print(reportWebActuate(result))
         } catch let error as GhostHandsError {
             failWebActuate("web click", error)
@@ -403,7 +414,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebFill(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         // web fill <selector> <text> <browser>
         guard positional.count >= 3 else { usage() }
         let selector = positional[0]
@@ -411,7 +422,8 @@ struct GhostHandsCLI {
         let browser = positional[2]
         do {
             let result = try await GhostHands.webFill(
-                selector: selector, text: text, browser: browser, lens: lens, debugPort: port)
+                selector: selector, text: text, browser: browser, lens: lens,
+                debugPort: port, relaunch: relaunch)
             print(reportWebActuate(result))
         } catch let error as GhostHandsError {
             failWebActuate("web fill", error)
@@ -450,14 +462,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebHtml(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         // web html <selector> <browser>
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
         let browser = positional[1]
         do {
             let result = try await GhostHands.webHtml(
-                selector: selector, browser: browser, lens: lens, debugPort: port)
+                selector: selector, browser: browser, lens: lens, debugPort: port,
+                relaunch: relaunch)
             print(WebHtml.render(result.shaped))
             // Honest footer to stderr: name the resolved selector + the lens.
             FileHandle.standardError.write(Data(
@@ -471,14 +484,15 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebEval(_ rest: [String]) async {
-        let (lens, port, positional) = parseWebLens(rest)
+        let (lens, port, relaunch, positional) = parseWebLens(rest)
         // web eval <js> <browser>
         guard positional.count >= 2 else { usage() }
         let js = positional[0]
         let browser = positional[1]
         do {
             let result = try await GhostHands.webEval(
-                js: js, browser: browser, lens: lens, debugPort: port)
+                js: js, browser: browser, lens: lens, debugPort: port,
+                relaunch: relaunch)
             print(result.value)
             FileHandle.standardError.write(Data(
                 "— evaluated in \(result.app) (via CDP, port \(result.port))\n".utf8))
@@ -1286,12 +1300,15 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
-          ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
-          ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
-          ghosthands web click "<selector>" <browser> [--cdp|--debug-port N]        click a CSS-selected element (CDP-only), verified by navigation
-          ghosthands web fill "<selector>" "<text>" <browser> [--cdp|--debug-port N] set a CSS-selected input's value (CDP-only), verified by read-back
-          ghosthands web html "<selector>" <browser> [--cdp|--debug-port N]         dump a CSS-selected element's outerHTML + attrs + computed style (CDP-only read)
-          ghosthands web eval "<js>" <browser> [--cdp|--debug-port N]               evaluate a JS expression and print the returned value (CDP-only power tool)
+          ghosthands web read <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   page digest (auto: CDP when a debug port is open, else AX)
+          ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   list open tabs (CDP lists background tabs too; AX marks * selected)
+          ghosthands web click "<selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click a CSS-selected element (CDP-only), verified by navigation
+          ghosthands web fill "<selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set a CSS-selected input's value (CDP-only), verified by read-back
+          ghosthands web html "<selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump a CSS-selected element's outerHTML + attrs + computed style (CDP-only read)
+          ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
+          (--relaunch: opt-in. When the debug port is CLOSED, launch a NEW, ISOLATED throwaway browser
+           instance — ephemeral OS-chosen port + a fresh temp profile (never your real cookies/history).
+           Without it, a closed port still refuses. Never relaunches silently, never touches your profile.)
           ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back

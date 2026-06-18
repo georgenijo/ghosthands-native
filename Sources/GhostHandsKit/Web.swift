@@ -566,6 +566,52 @@ extension GhostHands {
         case ax
     }
 
+    // MARK: Consent-gated isolated relaunch (Slice 4)
+
+    /// Resolve the EFFECTIVE CDP port for a FORCED/selector verb, applying the
+    /// consent-gated relaunch rule via the PURE `CDPLaunchDecision.decide`:
+    ///
+    ///   port open                       → use it (connect to the existing instance)
+    ///   port closed && !relaunch        → THROW `cdpPortClosed` (unchanged default refuse)
+    ///   port closed &&  relaunch        → launch a NEW, ISOLATED instance, then use
+    ///                                     the OS-chosen port read from its sidecar
+    ///
+    /// On a relaunch, returns the launched-instance facts (binary, temp profile,
+    /// chosen port) so the CLI can report EXACTLY what was launched — a relaunch is
+    /// never silent. The user's real profile is NEVER touched: the new instance
+    /// runs on a throwaway `--user-data-dir` under the system temp dir.
+    @MainActor
+    static func resolveCDPPort(target: Target, requestedPort: Int, relaunch: Bool)
+        async throws -> (port: Int, launched: CDPLaunchedInstance?) {
+        let portOpen = await CDPDiscovery.isPortOpen(requestedPort)
+        switch CDPLaunchDecision.decide(portOpen: portOpen, relaunchRequested: relaunch) {
+        case .connectExisting:
+            return (requestedPort, nil)
+        case .refuseClosed:
+            throw GhostHandsError.cdpPortClosed(app: target.name, port: requestedPort)
+        case .relaunchIsolated:
+            let binary = try browserBinaryPath(for: target)
+            let launched = try await CDPLauncher.launch(binaryPath: binary)
+            return (launched.port, launched)
+        }
+    }
+
+    /// Resolve the browser executable to relaunch from a resolved `Target`. We
+    /// relaunch the SAME browser app the user named — its bundle's executable, via
+    /// `NSRunningApplication.bundleURL` (the running app's real bundle on disk).
+    /// Throws `relaunchFailed` when the bundle / executable can't be located, so a
+    /// relaunch never spawns a guessed binary.
+    @MainActor
+    static func browserBinaryPath(for target: Target) throws -> String {
+        guard let bundleURL = target.app.bundleURL,
+              let bundle = Bundle(url: bundleURL),
+              let exec = bundle.executableURL else {
+            throw GhostHandsError.relaunchFailed(
+                reason: "could not locate the executable of \(target.name) to relaunch")
+        }
+        return exec.path
+    }
+
     /// `web read` with a lens. The EXISTING AX path stays authoritative; CDP is a
     /// parallel branch IN FRONT of it, never a replacement.
     ///
@@ -577,6 +623,7 @@ extension GhostHands {
     @MainActor
     public static func webRead(browser: String, lens: WebLens,
                                debugPort: Int = 9222,
+                               relaunch: Bool = false,
                                settle: TimeInterval = 0.8)
         async throws -> (result: WebReadResult, served: ServedLens) {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
@@ -588,10 +635,11 @@ extension GhostHands {
         case .ax:
             return (try webRead(browser: browser, settle: settle), .ax)
         case .cdp:
-            guard await CDPDiscovery.isPortOpen(debugPort) else {
-                throw GhostHandsError.cdpPortClosed(app: target.name, port: debugPort)
-            }
-            return (try await webReadCDP(target: target, port: debugPort), .cdp(port: debugPort))
+            // Consent-gated: open port → connect; closed + --relaunch → isolated
+            // relaunch on the OS-chosen port; closed without it → refuse.
+            let (port, _) = try await resolveCDPPort(
+                target: target, requestedPort: debugPort, relaunch: relaunch)
+            return (try await webReadCDP(target: target, port: port), .cdp(port: port))
         case .auto:
             if WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier),
                await CDPDiscovery.isPortOpen(debugPort) {
@@ -610,6 +658,7 @@ extension GhostHands {
     @MainActor
     public static func webTabs(browser: String, lens: WebLens,
                                debugPort: Int = 9222,
+                               relaunch: Bool = false,
                                settle: TimeInterval = 0.6)
         async throws -> (result: WebTabsResult, served: ServedLens) {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
@@ -621,11 +670,10 @@ extension GhostHands {
         case .ax:
             return (try webTabs(browser: browser, settle: settle), .ax)
         case .cdp:
-            guard await CDPDiscovery.isPortOpen(debugPort) else {
-                throw GhostHandsError.cdpPortClosed(app: target.name, port: debugPort)
-            }
-            return (try await webTabsCDP(target: target, port: debugPort),
-                    .cdp(port: debugPort))
+            let (port, _) = try await resolveCDPPort(
+                target: target, requestedPort: debugPort, relaunch: relaunch)
+            return (try await webTabsCDP(target: target, port: port),
+                    .cdp(port: port))
         case .auto:
             if WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier),
                await CDPDiscovery.isPortOpen(debugPort) {
@@ -740,11 +788,11 @@ extension GhostHands {
     ///               dispatched-unverified.
     @MainActor
     public static func webClick(selector: String, browser: String, lens: WebLens,
-                                debugPort: Int = 9222)
+                                debugPort: Int = 9222, relaunch: Bool = false)
         async throws -> WebActuateResult {
-        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
-                                                       port: debugPort)
-        let session = try await openPageSession(target: target, port: debugPort)
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
 
         // ONE occlusion + geometry probe, returned by value, decided PURELY.
         let probe = try await evaluateObject(
@@ -759,7 +807,7 @@ extension GhostHands {
             try await dispatchTrustedClick(session, at: center)
             let verdict = try await postClickVerdict(session, hrefBefore: hrefBefore)
             return WebActuateResult(app: target.name, selector: selector,
-                                    verb: "clicked", verdict: verdict, port: debugPort)
+                                    verb: "clicked", verdict: verdict, port: port)
         }
     }
 
@@ -773,11 +821,12 @@ extension GhostHands {
     ///               readback == text → VERIFIED; else dispatched-unverified.
     @MainActor
     public static func webFill(selector: String, text: String, browser: String,
-                               lens: WebLens, debugPort: Int = 9222)
+                               lens: WebLens, debugPort: Int = 9222,
+                               relaunch: Bool = false)
         async throws -> WebActuateResult {
-        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
-                                                       port: debugPort)
-        let session = try await openPageSession(target: target, port: debugPort)
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
 
         let probe = try await evaluateObject(
             session, WebActuate.probeExpression(selector: selector))
@@ -795,7 +844,7 @@ extension GhostHands {
         let readback = try await focusSetAndReadBack(session, selector: selector, text: text)
         let verdict = WebActuate.fillVerdict(intended: text, readback: readback)
         return WebActuateResult(app: target.name, selector: selector,
-                                verb: "filled", verdict: verdict, port: debugPort)
+                                verb: "filled", verdict: verdict, port: port)
     }
 
     // MARK: Selector-verb plumbing (impure thin)
@@ -805,20 +854,26 @@ extension GhostHands {
     /// (`selectorNeedsCDP`); `.cdp`/`.auto` both proceed on the default port. We do
     /// NOT silently fall back to AX (unlike `web read`) — there is no AX path for a
     /// CSS selector, so falling back would be a lie.
+    ///
+    /// Returns the resolved target AND the EFFECTIVE port: with `relaunch` off a
+    /// closed port still REFUSES (`cdpPortClosed`, unchanged); with `relaunch` on it
+    /// launches a NEW, ISOLATED instance and returns its OS-chosen port — so the
+    /// page session connects to the freshly-launched instance, never the user's
+    /// real profile.
     @MainActor
-    static func resolveForSelectorVerb(browser: String, lens: WebLens, port: Int)
-        async throws -> Target {
+    static func resolveForSelectorVerb(browser: String, lens: WebLens, port: Int,
+                                       relaunch: Bool = false)
+        async throws -> (target: Target, port: Int) {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
         }
         if lens == .ax { throw GhostHandsError.selectorNeedsCDP }
         let target = try Target.resolve(browser)
-        // A forced/default CDP verb needs the port actually open — refuse cleanly
-        // (the same gate `web read --cdp` uses) rather than fail deep in a connect.
-        guard await CDPDiscovery.isPortOpen(port) else {
-            throw GhostHandsError.cdpPortClosed(app: target.name, port: port)
-        }
-        return target
+        // Consent-gated: a closed port refuses unless --relaunch was given, in which
+        // case an isolated instance is launched and its chosen port is used.
+        let (effectivePort, _) = try await resolveCDPPort(
+            target: target, requestedPort: port, relaunch: relaunch)
+        return (target, effectivePort)
     }
 
     /// Surface a page-side JS throw as a transport error rather than flattening it
@@ -982,17 +1037,17 @@ extension GhostHands {
     ///               exposed — never a fabricated attribute or style.
     @MainActor
     public static func webHtml(selector: String, browser: String, lens: WebLens,
-                               debugPort: Int = 9222)
+                               debugPort: Int = 9222, relaunch: Bool = false)
         async throws -> WebHtmlResult {
-        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
-                                                       port: debugPort)
-        let session = try await openPageSession(target: target, port: debugPort)
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
         let probe = try await evaluateObject(
             session, WebHtml.htmlProbeExpression(selector: selector))
         // The pure shaper raises `selectorNotFound` on a `found:false` probe.
         let shaped = try WebHtml.shape(probe, selector: selector, app: target.name)
         return WebHtmlResult(app: target.name, selector: selector,
-                             shaped: shaped, port: debugPort)
+                             shaped: shaped, port: port)
     }
 
     /// `web eval <js>` over CDP. Resolve the first debuggable page target,
@@ -1005,11 +1060,11 @@ extension GhostHands {
     ///   else            → the returned value, stringified for printing.
     @MainActor
     public static func webEval(js: String, browser: String, lens: WebLens,
-                               debugPort: Int = 9222)
+                               debugPort: Int = 9222, relaunch: Bool = false)
         async throws -> WebEvalResult {
-        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
-                                                       port: debugPort)
-        let session = try await openPageSession(target: target, port: debugPort)
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
         // Evaluate the caller's expression directly (the WHOLE point of `web eval`
         // is the raw expression — it is the verb's input, never trusted as our code
         // beyond what the user typed). We DON'T go through `evaluateObject` because
@@ -1023,7 +1078,7 @@ extension GhostHands {
         case let .threw(message):
             throw GhostHandsError.cdpTransport(reason: message)
         case let .value(value):
-            return WebEvalResult(app: target.name, value: value, port: debugPort)
+            return WebEvalResult(app: target.name, value: value, port: port)
         }
     }
 }
