@@ -107,6 +107,19 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// malformed `/json/list` body, a never-arriving reply that hit its deadline,
     /// a CDP error reply, or a refused non-loopback `webSocketDebuggerUrl`.
     case cdpTransport(reason: String)
+    /// A `web click` / `web fill` CSS selector matched NO element in the page DOM.
+    /// We REFUSE rather than actuate an arbitrary or fabricated target — a missing
+    /// selector is a wrong-target signal, never a silent no-op.
+    case selectorNotFound(selector: String, app: String)
+    /// A `web click` target is OCCLUDED — another element overlays its center
+    /// point, so `document.elementFromPoint` returns the cover, not the target. We
+    /// REFUSE rather than dispatch a click that would land on the covering element
+    /// (the agent-browser-mined refuse: never click through an overlay).
+    case elementCovered(selector: String, coveredBy: String)
+    /// A `web click` / `web fill` was forced onto the `--ax` lens, but a CSS
+    /// selector has no AX equivalent — these selector verbs REQUIRE CDP. A
+    /// usage-class refuse, surfaced before any work.
+    case selectorNeedsCDP
 
     public var description: String {
         switch self {
@@ -207,6 +220,16 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "refusing to enable a debug surface silently"
         case let .cdpTransport(reason):
             return "CDP transport error: \(reason)"
+        case let .selectorNotFound(selector, app):
+            return "no element matching selector \(selector.debugDescription) in "
+                + "\(app)'s page — refusing to actuate a target that is not in the DOM"
+        case let .elementCovered(selector, coveredBy):
+            return "\(selector.debugDescription) is covered by a <\(coveredBy)> at its "
+                + "center point — refusing to click through an overlay (the click "
+                + "would land on the covering element, not the target)"
+        case .selectorNeedsCDP:
+            return "a CSS selector has no AX equivalent — `web click`/`web fill` "
+                + "REQUIRE CDP; drop --ax (default is --cdp, port 9222)"
         }
     }
 }

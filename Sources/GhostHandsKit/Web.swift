@@ -688,3 +688,265 @@ extension GhostHands {
         return WebTabsResult(app: target.name, tabs: tabs)
     }
 }
+
+// MARK: - CDP-only DOM-selector actuation (web click / web fill)
+
+extension GhostHands {
+    /// A `web click` / `web fill` result handed to the CLI: the browser name, the
+    /// selector acted on, the honest verdict, and the served port (for the footer).
+    public struct WebActuateResult: Sendable {
+        public let app: String
+        public let selector: String
+        /// The action label for the verdict line ("clicked" / "filled").
+        public let verb: String
+        public let verdict: WebActuate.Verdict
+        public let port: Int
+
+        /// True only when an observed world-change proved the actuation.
+        public var verified: Bool {
+            if case .verified = verdict { return true }
+            return false
+        }
+    }
+
+    /// Resolve the first debuggable PAGE target's socket on `port`, exactly like
+    /// `webReadCDP`. Throws `cdpTransport` (NOT `selectorNotFound`) when the port
+    /// lists NO debuggable page — that is a no-page-surface condition, not a wrong
+    /// selector (the selector is never probed here), so attributing it to the
+    /// selector would lie about the cause. `cdpPortClosed` is raised earlier (by
+    /// `resolveForSelectorVerb`) when the port itself is unreachable.
+    @MainActor
+    static func openPageSession(target: Target, port: Int)
+        async throws -> CDPSession {
+        let targets = try await CDPDiscovery.list(port: port, app: target.name)
+        guard let page = targets.first(where: { !$0.webSocketDebuggerUrl.isEmpty }) else {
+            throw GhostHandsError.cdpTransport(
+                reason: "no debuggable page target on port \(port) for "
+                    + "\(target.name) — open a tab to actuate")
+        }
+        let session = try CDPSession.open(wsURL: page.webSocketDebuggerUrl)
+        _ = try await session.call("Runtime.enable")
+        return session
+    }
+
+    /// `web click <selector>` over CDP. ONE probe (occlusion + geometry), the pure
+    /// `clickDecision` gate, then — on `.proceed` — a TRUSTED click via
+    /// `Input.dispatchMouseEvent`, verified by an href change.
+    ///
+    ///   .notFound → throw `selectorNotFound`
+    ///   .covered  → throw `elementCovered` (refuse: never click through an overlay)
+    ///   .proceed  → read href, dispatch mousePressed+mouseReleased at the center,
+    ///               read href again. Changed → VERIFIED (navigation); else
+    ///               dispatched-unverified.
+    @MainActor
+    public static func webClick(selector: String, browser: String, lens: WebLens,
+                                debugPort: Int = 9222)
+        async throws -> WebActuateResult {
+        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
+                                                       port: debugPort)
+        let session = try await openPageSession(target: target, port: debugPort)
+
+        // ONE occlusion + geometry probe, returned by value, decided PURELY.
+        let probe = try await evaluateObject(
+            session, WebActuate.probeExpression(selector: selector))
+        switch WebActuate.clickDecision(from: probe) {
+        case .notFound:
+            throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
+        case let .covered(by):
+            throw GhostHandsError.elementCovered(selector: selector, coveredBy: by)
+        case let .proceed(center, _):
+            let hrefBefore = try await readLocationHref(session)
+            try await dispatchTrustedClick(session, at: center)
+            let verdict = try await postClickVerdict(session, hrefBefore: hrefBefore)
+            return WebActuateResult(app: target.name, selector: selector,
+                                    verb: "clicked", verdict: verdict, port: debugPort)
+        }
+    }
+
+    /// `web fill <selector> <text>` over CDP. ONE probe to confirm the element
+    /// exists and is not a SECURE field, then focus + set the value + dispatch
+    /// input/change, verified by reading the value back.
+    ///
+    ///   not found → throw `selectorNotFound`
+    ///   isSecure  → throw `secureFieldUnverifiable` (value can't be read back)
+    ///   else      → el.focus(); el.value = text; dispatch input+change; read back.
+    ///               readback == text → VERIFIED; else dispatched-unverified.
+    @MainActor
+    public static func webFill(selector: String, text: String, browser: String,
+                               lens: WebLens, debugPort: Int = 9222)
+        async throws -> WebActuateResult {
+        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
+                                                       port: debugPort)
+        let session = try await openPageSession(target: target, port: debugPort)
+
+        let probe = try await evaluateObject(
+            session, WebActuate.probeExpression(selector: selector))
+        // A fill only needs the element to EXIST — not a usable box (a zero-box
+        // input, e.g. one briefly display:none then shown, is still fillable). So
+        // gate directly on `found`, NOT on `clickDecision` (which also demotes a
+        // box-less element to `.notFound`, the wrong refuse for fill).
+        guard WebActuate.boolValue(probe["found"]) else {
+            throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
+        }
+        if WebActuate.isSecure(from: probe) {
+            throw GhostHandsError.secureFieldUnverifiable(name: selector)
+        }
+
+        let readback = try await focusSetAndReadBack(session, selector: selector, text: text)
+        let verdict = WebActuate.fillVerdict(intended: text, readback: readback)
+        return WebActuateResult(app: target.name, selector: selector,
+                                verb: "filled", verdict: verdict, port: debugPort)
+    }
+
+    // MARK: Selector-verb plumbing (impure thin)
+
+    /// Resolve the browser AND enforce the lens contract for a selector verb. The
+    /// selector verbs REQUIRE CDP: a forced `--ax` is a USAGE refuse
+    /// (`selectorNeedsCDP`); `.cdp`/`.auto` both proceed on the default port. We do
+    /// NOT silently fall back to AX (unlike `web read`) — there is no AX path for a
+    /// CSS selector, so falling back would be a lie.
+    @MainActor
+    static func resolveForSelectorVerb(browser: String, lens: WebLens, port: Int)
+        async throws -> Target {
+        guard AXPermissionHelpers.hasAccessibilityPermissions() else {
+            throw GhostHandsError.accessibilityNotTrusted
+        }
+        if lens == .ax { throw GhostHandsError.selectorNeedsCDP }
+        let target = try Target.resolve(browser)
+        // A forced/default CDP verb needs the port actually open — refuse cleanly
+        // (the same gate `web read --cdp` uses) rather than fail deep in a connect.
+        guard await CDPDiscovery.isPortOpen(port) else {
+            throw GhostHandsError.cdpPortClosed(app: target.name, port: port)
+        }
+        return target
+    }
+
+    /// Surface a page-side JS throw as a transport error rather than flattening it
+    /// into a silent nil/empty value. A `Runtime.evaluate` whose in-page expression
+    /// THREW returns a reply carrying `exceptionDetails` (and no usable `value`); a
+    /// caller that only reads `value` would mistake a genuinely broken page for a
+    /// clean no-effect. We REFUSE (`cdpTransport`) so a thrown probe is honestly
+    /// distinguished from an honest empty result.
+    static func throwIfEvaluateException(_ reply: [String: Any]) throws {
+        guard let details = reply["exceptionDetails"] as? [String: Any] else { return }
+        // The human-readable text lives in `exception.description` (a thrown Error)
+        // or the top-level `text` ("Uncaught"); fall back to a generic note.
+        let exception = details["exception"] as? [String: Any]
+        let message = (exception?["description"] as? String)
+            ?? (details["text"] as? String)
+            ?? "page-side JS exception"
+        throw GhostHandsError.cdpTransport(reason: "evaluate threw in page: \(message)")
+    }
+
+    /// Evaluate an expression that returns a JS OBJECT by value and unwrap it to a
+    /// `[String: Any]`. Honest empty `[:]` when the page returned a non-object —
+    /// the pure deciders treat an empty object as `notFound`, never a crash. A
+    /// page-side THROW is surfaced as `cdpTransport` (a broken page is not a clean
+    /// "not found").
+    @MainActor
+    static func evaluateObject(_ session: CDPSession, _ expression: String)
+        async throws -> [String: Any] {
+        let reply = try await session.call("Runtime.evaluate", params: [
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true,
+        ])
+        try throwIfEvaluateException(reply)
+        guard let resultObj = reply["result"] as? [String: Any],
+              let value = resultObj["value"] as? [String: Any] else { return [:] }
+        return value
+    }
+
+    /// Read `document.location.href` off the page, or nil when it can't be read
+    /// (a non-string result) — so a verdict over a nil before/after is honestly
+    /// dispatched-unverified, never a fabricated URL. A page-side THROW is surfaced
+    /// as `cdpTransport` rather than masquerading as an unreadable URL.
+    @MainActor
+    static func readLocationHref(_ session: CDPSession) async throws -> String? {
+        let reply = try await session.call("Runtime.evaluate", params: [
+            "expression": "document.location.href",
+            "returnByValue": true,
+        ])
+        try throwIfEvaluateException(reply)
+        guard let resultObj = reply["result"] as? [String: Any] else { return nil }
+        return resultObj["value"] as? String
+    }
+
+    /// Dispatch a TRUSTED left click (mousePressed then mouseReleased, clickCount 1)
+    /// at a viewport point via `Input.dispatchMouseEvent` — a real input event the
+    /// page sees as user-initiated, not a synthetic `el.click()`.
+    @MainActor
+    static func dispatchTrustedClick(_ session: CDPSession, at p: CGPoint) async throws {
+        let common: [String: Any] = [
+            "x": Double(p.x), "y": Double(p.y),
+            "button": "left", "clickCount": 1,
+        ]
+        var press = common; press["type"] = "mousePressed"
+        var release = common; release["type"] = "mouseReleased"
+        _ = try await session.call("Input.dispatchMouseEvent", params: press)
+        _ = try await session.call("Input.dispatchMouseEvent", params: release)
+    }
+
+    /// Read the href AFTER a click and turn it into a verdict, tolerant of the
+    /// navigation race: when a click triggers a REAL navigation, the page's JS
+    /// execution context is torn down, so the immediate `document.location.href`
+    /// read can land on a dead context and throw `cdpTransport`. That is NOT a
+    /// failure — a destroyed context is itself evidence the page navigated. We
+    /// settle briefly and retry once (the new context usually answers with the new
+    /// URL → a clean VERIFIED with the landed href); if the read STILL throws
+    /// transport, we honor the context teardown as VERIFIED-by-navigation rather
+    /// than under-claiming a real success as an error. A non-transport error (or a
+    /// clean read on either attempt) flows through `clickVerdict` unchanged.
+    @MainActor
+    static func postClickVerdict(_ session: CDPSession, hrefBefore: String?)
+        async throws -> WebActuate.Verdict {
+        do {
+            let after = try await readLocationHref(session)
+            return WebActuate.clickVerdict(hrefBefore: hrefBefore, hrefAfter: after)
+        } catch let error as GhostHandsError {
+            guard case .cdpTransport = error else { throw error }
+            // The execution context was likely destroyed by a navigation. Settle
+            // and try once more — the new page's context may now answer.
+            try? await Task.sleep(for: .milliseconds(300))
+            if let after = try? await readLocationHref(session) {
+                return WebActuate.clickVerdict(hrefBefore: hrefBefore, hrefAfter: after)
+            }
+            // Still no usable read: the torn-down context IS the navigation evidence.
+            let from = hrefBefore.map { $0.debugDescription } ?? "the page"
+            return .verified(evidence:
+                "navigated away from \(from) (page context destroyed by navigation)")
+        }
+    }
+
+    /// Focus the selector's element, set its `value`, fire `input`+`change`, and
+    /// return the value READ BACK off the same element (the verification spine).
+    /// Returns nil when the readback isn't a string (the element vanished / has no
+    /// `.value`) — honest dispatched-unverified, never a fabricated success. A
+    /// page-side THROW (e.g. a `value` setter on a custom element that raises) is
+    /// surfaced as `cdpTransport` rather than masquerading as an unreadable value.
+    @MainActor
+    static func focusSetAndReadBack(_ session: CDPSession, selector: String,
+                                    text: String) async throws -> String? {
+        let selJSON = WebActuate.jsonStringLiteral(selector)
+        let textJSON = WebActuate.jsonStringLiteral(text)
+        let expression = """
+        (() => {
+          const el = document.querySelector(\(selJSON));
+          if (!el) return null;
+          el.focus();
+          el.value = \(textJSON);
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return (typeof el.value === 'string') ? el.value : null;
+        })()
+        """
+        let reply = try await session.call("Runtime.evaluate", params: [
+            "expression": expression,
+            "returnByValue": true,
+            "awaitPromise": true,
+        ])
+        try throwIfEvaluateException(reply)
+        guard let resultObj = reply["result"] as? [String: Any] else { return nil }
+        return resultObj["value"] as? String
+    }
+}

@@ -206,6 +206,8 @@ struct GhostHandsCLI {
         switch sub {
         case "read": await runWebRead(tail)
         case "tabs": await runWebTabs(tail)
+        case "click": await runWebClick(tail)
+        case "fill": await runWebFill(tail)
         default: usage()
         }
     }
@@ -286,6 +288,71 @@ struct GhostHandsCLI {
         case let .cdp(port): return "via CDP, port \(port)"
         case .ax: return "via AX"
         }
+    }
+
+    // MARK: - web click / web fill (CDP-only DOM-selector actuation)
+
+    @MainActor
+    static func runWebClick(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        // web click <selector> <browser>
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let browser = positional[1]
+        do {
+            let result = try await GhostHands.webClick(
+                selector: selector, browser: browser, lens: lens, debugPort: port)
+            print(reportWebActuate(result))
+        } catch let error as GhostHandsError {
+            failWebActuate("web click", error)
+        } catch {
+            failUnexpected("web click")
+        }
+    }
+
+    @MainActor
+    static func runWebFill(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        // web fill <selector> <text> <browser>
+        guard positional.count >= 3 else { usage() }
+        let selector = positional[0]
+        let text = positional[1]
+        let browser = positional[2]
+        do {
+            let result = try await GhostHands.webFill(
+                selector: selector, text: text, browser: browser, lens: lens, debugPort: port)
+            print(reportWebActuate(result))
+        } catch let error as GhostHandsError {
+            failWebActuate("web fill", error)
+        } catch {
+            failUnexpected("web fill")
+        }
+    }
+
+    /// Honest one-liner for a selector actuation. VERIFIED quotes the observed
+    /// evidence (a navigation, or a value read-back); DISPATCHED-UNVERIFIED states
+    /// plainly that the event was dispatched but the effect is unproven (exit 0,
+    /// never a success claim). A footer names the lens (CDP, port N).
+    static func reportWebActuate(_ r: GhostHands.WebActuateResult) -> String {
+        let sel = r.selector.debugDescription
+        let footer = "(via CDP, port \(r.port))"
+        switch r.verdict {
+        case let .verified(evidence):
+            return "\(r.verb) \(sel) in \(r.app) — verified: \(evidence) \(footer)"
+        case let .dispatchedUnverified(reason):
+            return "\(r.verb) \(sel) in \(r.app) — \(reason) \(footer)"
+        }
+    }
+
+    /// A `web click`/`web fill` refuse that is a USAGE-class error (the selector
+    /// verbs were forced onto `--ax`) exits 2; every other refuse exits 1 (mirrors
+    /// runAct's `.unknownAction` wiring).
+    static func failWebActuate(_ verb: String, _ error: GhostHandsError) -> Never {
+        if case .selectorNeedsCDP = error {
+            FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
+            exit(2)
+        }
+        fail(verb, error)
     }
 
     // MARK: - navigate
@@ -852,6 +919,8 @@ struct GhostHandsCLI {
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
+          ghosthands web click "<selector>" <browser> [--cdp|--debug-port N]        click a CSS-selected element (CDP-only), verified by navigation
+          ghosthands web fill "<selector>" "<text>" <browser> [--cdp|--debug-port N] set a CSS-selected input's value (CDP-only), verified by read-back
           ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back
@@ -878,6 +947,8 @@ struct GhostHandsCLI {
           ghosthands snapshot Calculator --json
           ghosthands web read Brave
           ghosthands web tabs Chrome
+          ghosthands web click "#submit" Brave
+          ghosthands web fill "input[name=q]" "swift" Chrome
           ghosthands navigate "example.com" Brave
           ghosthands navigate "https://docs.swift.org/"
           ghosthands windows Finder
@@ -920,6 +991,18 @@ struct GhostHandsCLI {
             (Brave → Chrome → Chromium → Arc → Edge) and refuses if none is running rather
             than fall back to a browser it cannot verify against. v1 = open + read-back;
             typing the URL into the omnibox is a future upgrade.
+          - web click / web fill are the CDP-only DOM-selector ACTUATION tier — a CSS
+            selector has no AX equivalent, so they REQUIRE CDP (default --cdp, port 9222;
+            a forced --ax REFUSES with a usage error). web click runs ONE occlusion probe
+            (document.elementFromPoint at the target's center): a missing selector REFUSES
+            (selectorNotFound), an OVERLAID target REFUSES (elementCovered — never click
+            through another element), else it dispatches a TRUSTED Input.dispatchMouseEvent
+            and verifies by an href change: a navigation is VERIFIED, an unchanged URL is
+            dispatched-unverified (the click landed; its in-page effect is unproven), NEVER
+            success. web fill focuses the input, sets .value, fires input+change, then READS
+            the value back: readback == text is VERIFIED, anything else is dispatched-
+            unverified (a field that rejects/caps/transforms the set is NEVER success). A
+            SECURE (password) input is REFUSED — its value can't be read back to verify.
           - windows is a pure read (no focus steal, no AXRaise); a nil window id/title/
             display is reported as unknown ('?' / off-screen), never fabricated.
           - window move/resize set an AX attribute INVISIBLY (cursor-less, no focus steal,
