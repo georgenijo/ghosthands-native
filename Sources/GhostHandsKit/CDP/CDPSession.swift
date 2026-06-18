@@ -113,11 +113,16 @@ public actor CDPSession {
 
         let end = ContinuousClock.now + deadline
         while true {
-            if ContinuousClock.now >= end {
+            let remaining = end - ContinuousClock.now
+            if remaining <= .zero {
                 throw GhostHandsError.cdpTransport(
                     reason: "\(method): no response id=\(id) within \(deadline)")
             }
-            let text = try await transport.receive()
+            // Bound the receive itself, not just the loop top: a socket that
+            // accepts the request then stalls mid-stream (never delivering another
+            // frame) must not block past the deadline. Race receive against the
+            // REMAINING time so the bound is real, not best-effort.
+            let text = try await receiveWithin(remaining, method: method, id: id)
             switch CDPMessage.classify(text, expecting: id) {
             case .event, .other:
                 continue // skip a foreign event / foreign-id reply / junk
@@ -126,6 +131,35 @@ public actor CDPSession {
             case let .reply(_, result):
                 return result ?? [:]
             }
+        }
+    }
+
+    /// `transport.receive()` raced against a `timeout` sleep: whichever finishes
+    /// first wins, the loser is cancelled. A stalled socket therefore raises
+    /// `cdpTransport` at the deadline instead of hanging in `receive()` forever.
+    /// (The real `URLSessionWebSocketTask.receive()` has no per-call timeout of its
+    /// own, so this is the only place the bound becomes enforceable.)
+    private func receiveWithin(_ timeout: Duration, method: String, id: Int)
+        async throws -> String {
+        try await withThrowingTaskGroup(of: String?.self) { group in
+            let transport = self.transport
+            group.addTask { try await transport.receive() }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil // the timeout arm — nil signals "deadline hit"
+            }
+            defer { group.cancelAll() }
+            // The first arm to finish decides. A non-nil result is a real frame; a
+            // nil result is the timeout firing before any frame arrived.
+            guard let first = try await group.next() else {
+                throw GhostHandsError.cdpTransport(
+                    reason: "\(method): receive race produced no result id=\(id)")
+            }
+            guard let text = first else {
+                throw GhostHandsError.cdpTransport(
+                    reason: "\(method): receive stalled, no frame id=\(id) within \(timeout)")
+            }
+            return text
         }
     }
 }
