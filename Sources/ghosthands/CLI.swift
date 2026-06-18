@@ -32,6 +32,8 @@ struct GhostHandsCLI {
             runDoubleClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
+        case "navigate":
+            runNavigate(Array(args.dropFirst()))
         case "web":
             runWeb(Array(args.dropFirst()))
         case "windows":
@@ -246,6 +248,41 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("web tabs")
         }
+    }
+
+    // MARK: - navigate
+
+    @MainActor
+    static func runNavigate(_ rest: [String]) {
+        // navigate "<url>" [browser]. URL required; browser optional → auto-pick
+        // a running Chromium.
+        guard let url = rest.first else { usage() }
+        let browser = rest.count >= 2 ? rest[1] : nil
+        do {
+            let outcome = try GhostHands.navigate(url: url, browser: browser)
+            print(reportNavigate(outcome))
+        } catch let error as GhostHandsError {
+            fail("navigate", error)
+        } catch {
+            failUnexpected("navigate")
+        }
+    }
+
+    /// Honest one-liner for a navigate. VERIFIED quotes the landed URL (and title)
+    /// as evidence; DISPATCHED-UNVERIFIED states plainly that the load was issued
+    /// but the landed page could not be confirmed (the word "unverified" is
+    /// present) — exits 0, NEVER a "navigated"/success claim. The browser is named
+    /// (with "(auto-picked)" when `[browser]` was omitted).
+    static func reportNavigate(_ o: GhostHands.NavigateOutcome) -> String {
+        let pick = o.autoPicked ? " (auto-picked)" : ""
+        let into = "in \(o.app)\(pick)"
+        if o.verified {
+            return "navigated to \(o.requestedURL.debugDescription) \(into) — "
+                + "verified: \(o.evidence ?? "page changed")"
+        }
+        return "load issued for \(o.requestedURL.debugDescription) \(into) — "
+            + "could not confirm landed page (effect unverified): "
+            + "\(o.evidence ?? "no readable page URL")"
     }
 
     // MARK: - windows (read)
@@ -722,6 +759,7 @@ struct GhostHandsCLI {
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands web read <browser>               page-scoped digest (chrome stripped, AX only)
           ghosthands web tabs <browser>               list open tabs (* = selected); refuses if not exposed
+          ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back
           ghosthands window resize <w> <h> <app> [--window <id|title>]  set size (invisible AX set), verified by read-back
@@ -746,6 +784,8 @@ struct GhostHandsCLI {
           ghosthands snapshot Calculator --json
           ghosthands web read Brave
           ghosthands web tabs Chrome
+          ghosthands navigate "example.com" Brave
+          ghosthands navigate "https://docs.swift.org/"
           ghosthands windows Finder
           ghosthands window move 100 80 Calculator
           ghosthands window resize 800 600 Notes --window "Untitled"
@@ -769,6 +809,20 @@ struct GhostHandsCLI {
             back, so a set cannot be verified.
           - act/doubleclick verify by read-back where observable; actions with no in-AX
             observable (e.g. raise, show-menu) land as dispatched-unverified, never faked.
+          - navigate loads <url> via `open -a <browser> <url>` (no cursor, no focus games
+            beyond what the load surfaces), settles, then RE-READS the FOCUSED window's
+            page AXWebArea URL/title (the window `open` raised the load into — NOT the
+            first-enumerated window, so a pre-existing same-host tab can't be mistaken for
+            this load): VERIFIED only when the landed host matches the requested host (and
+            the path when a specific one was requested); a load whose page can't be read
+            back, or whose host doesn't (yet) match — an SPA client-side route, a
+            redirect/SSO we can't confirm, or an AXWebArea that isn't exposed — is reported
+            dispatched-unverified, NEVER "navigated". "open returned 0" is NOT proof. It
+            REFUSES a malformed URL (no host after normalizing) and an unresolved/ambiguous
+            browser; with [browser] omitted it auto-picks the first RUNNING Chromium
+            (Brave → Chrome → Chromium → Arc → Edge) and refuses if none is running rather
+            than fall back to a browser it cannot verify against. v1 = open + read-back;
+            typing the URL into the omnibox is a future upgrade.
           - windows is a pure read (no focus steal, no AXRaise); a nil window id/title/
             display is reported as unknown ('?' / off-screen), never fabricated.
           - window move/resize set an AX attribute INVISIBLY (cursor-less, no focus steal,
