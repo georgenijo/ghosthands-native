@@ -208,7 +208,8 @@ extension GhostHands {
         // `ScrollAreaMatch` so >1 distinct area is AMBIGUOUS (refuse), never a
         // silent `.first`.
         if let named {
-            let matches = target.element.searchElements(matching: named)
+            let matches = target.element.searchElements(
+                matching: named, options: Self.boundedSearchOptions)
                 .filter { $0.role() == "AXScrollArea" }
             switch ScrollAreaMatch.resolve(matches.map { scrollAreaFacts($0) }) {
             case let .unique(i): return matches[i]
@@ -225,8 +226,22 @@ extension GhostHands {
             return focusedArea
         }
         let window = frontmostWindow(of: target) ?? target.element
-        let areas = window.searchElements(byRole: "AXScrollArea")
+        let areas = window.searchElements(
+            byRole: "AXScrollArea", options: Self.boundedSearchOptions)
         return largestByArea(areas)
+    }
+
+    /// A bounded AX search options for scroll-area resolution. AXorcist's recursive
+    /// search treats `maxDepth == 0` as NO limit, so a cyclic AX subtree (real apps
+    /// expose them) overflows the stack and the process dies with SIGSEGV instead of
+    /// returning an honest result. Bound the depth (the same guard Finder applies to
+    /// every other resolve verb). No role/enabled filtering — a scroll area must not
+    /// be dropped by those gates.
+    @MainActor
+    static var boundedSearchOptions: ElementSearchOptions {
+        var o = ElementSearchOptions()
+        o.maxDepth = Finder.maxSearchDepth
+        return o
     }
 
     /// The app's main/focused window, else the first window. nil if it has none.
