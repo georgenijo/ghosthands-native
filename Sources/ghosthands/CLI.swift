@@ -43,6 +43,10 @@ struct GhostHandsCLI {
             await runClickAt(Array(args.dropFirst()))
         case "drag":
             await runDrag(Array(args.dropFirst()))
+        case "replay":
+            runReplay(Array(args.dropFirst()))
+        case "record":
+            runRecord(Array(args.dropFirst()))
         default:
             usage()
         }
@@ -372,9 +376,105 @@ struct GhostHandsCLI {
         fail(verb, .badCoordinate(raw))
     }
 
+    // MARK: - replay
+
+    @MainActor
+    static func runReplay(_ rest: [String]) {
+        // replay <flow.json> [--keep-going], flag in any order.
+        var flowPath: String?
+        var keepGoing = false
+        for arg in rest {
+            switch arg {
+            case "--keep-going": keepGoing = true
+            default: if flowPath == nil { flowPath = arg }
+            }
+        }
+        guard let flowPath else { usage() }
+        do {
+            let run = try GhostHands.replay(flowPath: flowPath, keepGoing: keepGoing) {
+                index, total, line in
+                print("step \(index)/\(total): \(line)")
+            }
+            let s = run.summary
+            // Honest summary to stderr (stdout carries the per-step verdicts).
+            var note = "— \(s.executed)/\(run.total) step(s): "
+                + "\(s.verified) verified, \(s.dispatched) unverified, \(s.refused) refused"
+            if s.stoppedEarly { note += " (stopped on refuse — use --keep-going to continue)" }
+            FileHandle.standardError.write(Data((note + "\n").utf8))
+            // Exit 0 iff no step refused; non-zero otherwise (the pure policy).
+            exit(s.exitCode)
+        } catch let error as FlowCodec.FlowError {
+            fail("replay", error)
+        } catch let error as GhostHandsError {
+            fail("replay", error)
+        } catch {
+            failUnexpected("replay")
+        }
+    }
+
+    // MARK: - record
+
+    @MainActor
+    static func runRecord(_ rest: [String]) {
+        // record <flow.json> <verb> <args...>
+        guard rest.count >= 2 else { usage() }
+        let flowPath = rest[0]
+        let verb = rest[1]
+        let verbArgs = Array(rest.dropFirst(2))
+        guard let step = parseStep(verb: verb, args: verbArgs) else { usage() }
+        do {
+            let run = try GhostHands.record(step, into: flowPath)
+            print(run.line)
+            if run.appended {
+                FileHandle.standardError.write(
+                    Data("— appended to \(flowPath) (now \(run.stepCount) step(s))\n".utf8))
+            } else {
+                FileHandle.standardError.write(
+                    Data("— NOT appended (step refused; flow left at \(run.stepCount) step(s))\n".utf8))
+                // A refused step is a non-zero exit, exactly like running the verb.
+                exit(1)
+            }
+        } catch let error as FlowCodec.FlowError {
+            fail("record", error)
+        } catch let error as GhostHandsError {
+            fail("record", error)
+        } catch {
+            failUnexpected("record")
+        }
+    }
+
+    /// Build a `Step` from a verb token + its positional args, using the SAME
+    /// arity/order as the direct verbs (app spec last). nil → usage error.
+    static func parseStep(verb: String, args: [String]) -> Step? {
+        switch verb {
+        case "click":
+            guard args.count >= 2 else { return nil }
+            return .click(name: args[0], app: args[1])
+        case "type":
+            guard args.count >= 3 else { return nil }
+            return .type(text: args[0], field: args[1], app: args[2])
+        case "set-value":
+            guard args.count >= 3 else { return nil }
+            return .setValue(value: args[0], control: args[1], app: args[2])
+        case "doubleclick":
+            guard args.count >= 2 else { return nil }
+            return .doubleclick(name: args[0], app: args[1])
+        case "act":
+            guard args.count >= 3 else { return nil }
+            return .act(action: args[0], name: args[1], app: args[2])
+        default:
+            return nil
+        }
+    }
+
     // MARK: - failure helpers
 
     static func fail(_ verb: String, _ error: GhostHandsError) -> Never {
+        FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
+        exit(1)
+    }
+
+    static func fail(_ verb: String, _ error: FlowCodec.FlowError) -> Never {
         FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
         exit(1)
     }
@@ -401,6 +501,8 @@ struct GhostHandsCLI {
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app>           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app>   press-move-release between two GLOBAL points (pixel)
+          ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
+          ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
           ghosthands version
 
           <action> for `act` = open | confirm | pick | show-menu | cancel | raise | increment | decrement
@@ -418,6 +520,8 @@ struct GhostHandsCLI {
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
+          ghosthands record /tmp/login.json type "alice" "Username" Safari
+          ghosthands replay /tmp/login.json
 
         Honesty: every verb reports observed evidence only.
           - click is VERIFIED only on an observed change (incl. a named sibling witness,
