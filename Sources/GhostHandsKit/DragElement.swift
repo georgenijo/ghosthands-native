@@ -259,6 +259,10 @@ extension GhostHands {
             return facts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            // Unreachable today (drag passes no locator → .none can't tie-break),
+            // but handled so the switch stays exhaustive and honest.
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: app)
         }

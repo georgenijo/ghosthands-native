@@ -316,6 +316,7 @@ final class MCPTests: XCTestCase {
             .appAmbiguous(spec: "S", candidates: ["a", "b"]),
             .elementNotFound(name: "n", app: "a"),
             .ambiguousMatch(name: "n", candidates: ["a", "b"]),
+            .locatorIndexOutOfRange(name: "n", requested: 5, count: 2),
             .actionRejected(name: "n", action: "AXPress"),
             .secureFieldUnverifiable(name: "n"),
             .valueUncoercible(value: "v", role: "AXSlider"),

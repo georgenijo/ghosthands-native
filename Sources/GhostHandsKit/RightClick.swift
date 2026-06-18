@@ -145,6 +145,7 @@ extension GhostHands {
     @MainActor
     public static func rightClick(name: String, appSpec: String,
                                   mode: PixelMode = .invisible,
+                                  locator: LocatorSpec = .none,
                                   settle: TimeInterval = 0.15) throws -> RightClickOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -153,12 +154,15 @@ extension GhostHands {
 
         let element: Element
         let facts: ElementFacts
-        switch Finder.resolve(named: name, under: target.element, accept: isRightClickable) {
+        switch Finder.resolve(named: name, under: target.element, accept: isRightClickable,
+                              locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }
