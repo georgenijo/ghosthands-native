@@ -69,7 +69,7 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ✅ | ✅ | done (M3) |
 | record / replay a flow (no model) | ✅ | ❌ | ✅ | ✅ | done (M3 pass-2) |
 | Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
-| Drag-and-drop (install app: DMG → Applications) | ❌ | ✅ | ❌ | ✅ | M4 |
+| Install app (DMG → Applications, cp -R + verify bundle) | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Multi-monitor + window identity/management | ❌ | ✅ | ❌ | ✅ | M4 |
 | Web tier (read page) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |
 | Web tier (tabs / bookmarks) | ✅(cua) | ✅ | ~(no AXTabGroup) | ✅ | M4 (CDP = future) |

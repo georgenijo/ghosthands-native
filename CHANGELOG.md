@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.0-m4 — 2026-06-18
+
+M4 hard surfaces. New verbs that reach past the AX action set, each honest about
+what it can prove.
+
+**Added**
+- **`install <dmg> [--force] [--dest <dir>]`** — the "install an app" surface,
+  cursor-less. Mounts the DMG (`hdiutil attach -nobrowse -noverify -plist`),
+  finds the single top-level `.app`, copies it with `cp -R` (not a GUI drag) to
+  the destination (default `/Applications`), **always detaches** the mount (a
+  crash-safe `defer`), and **verifies** the installed bundle is really present
+  with a parseable `Info.plist` `CFBundleIdentifier` — never just "cp returned
+  0". Honest verdicts: **verified** (bundle present + identifier) / **dispatched-
+  unverified** (copied but unconfirmable — never the word "installed") / **refuse**
+  (exit 1) on no DMG, mount failure, zero or >1 `.app` (never guesses which),
+  destination already exists without `--force` (never clobbers an installed
+  app), or copy failure. Four pure decisions (mount-point parse, `.app` choice,
+  overwrite gate, verify decision) are unit-tested; the live path drives them
+  with real values. First subprocess in the codebase — plain `Foundation.Process`,
+  no new deps. *Live-verified* with a throwaway DMG into a temp dest (never
+  touched real `/Applications`): install → `verified: CFBundleIdentifier
+  com.ghosthands.testapp present`; a second install without `--force` → honest
+  refuse (exit 1, "refusing to overwrite … pass --force"); with `--force` →
+  verified again; an independent `PlistBuddy` read confirmed the identifier on
+  disk; no volume left mounted (clean detach across the refuse path too).
+  A review pass caught and fixed a real robustness bug pre-merge: the detach
+  `defer` called `waitUntilExit()` unconditionally after a `try?`'d launch, which
+  would `SIGABRT` (and leak the mount) if `hdiutil` ever failed to launch on
+  detach — now the wait is guarded behind a successful `run()`.
+
+**Known limitations (surfaced, not hidden)**
+- `install`'s scope of "verified" is **presence + a parseable
+  `CFBundleIdentifier` only** — Gatekeeper / quarantine / notarization, code-
+  signature validity, and first-launch TCC are out of scope (presence, not
+  trust). The live subprocess pipeline (real mount/detach/`cp -R`/`--force`
+  remove) is exercised by the live-verify above but is not in the hermetic suite
+  (rails forbid mounting a real DMG or writing a real install dir in unit tests);
+  the four pure decisions carry the 21 hermetic tests.
+
+**Tests:** 246 hermetic total (+21 install). Honesty review PASS; merged on
+`main` (build + 246 green); `install` live-verified before push.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.4.1-m4 — 2026-06-18
 
 Two honest-but-limited tiers from 0.4.0 hardened. The web read tier now works on
