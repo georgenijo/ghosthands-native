@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.6.0-m4 — 2026-06-18
+
+M4 hard surfaces, continued: window identity + management, multi-monitor aware,
+AX-only, every mutation proved by reading the frame back.
+
+**Added**
+- **`windows <app>`** — list each of an app's windows with a stable identity:
+  CGWindowID (via the same `_AXUIElementGetWindow` shim the effect-witness
+  already uses to pin a window), title, frame, the display it sits on (frame
+  center mapped to a `CGDisplayBounds` top-left rect), and main / focused /
+  minimized flags. Pure read — no focus steal. An unreadable AX window-list
+  refuses *distinctly* from a genuinely windowless app (never mislabels an AX
+  failure as "no windows").
+- **`window move <x> <y> <app> [--window <id|title>]`** and
+  **`window resize <w> <h> <app> [--window <id|title>]`** — set `AXPosition` /
+  `AXSize` through AXorcist's correctly-typed `AXValue` setters (the generic
+  `setValue` does *not* bridge `CGPoint`/`CGSize`), then **re-read the frame and
+  verify**: VERIFIED only when the read-back lands within 2px of target;
+  **OS-clamped** (min-size, off-screen guard, full-screen ignores the set)
+  reports the *actual* landed frame as honest dispatched-unverified; an
+  AX-accepted-but-unchanged set is dispatched-unverified. The AX dispatch result
+  is never used as proof — the read-back is the only truth.
+- **`window raise <app> [--window <id|title>]`** — raw `AXRaise` (deliberately
+  *not* `focusWindow`/`showWindow`, which would activate the app and steal
+  focus). A stacking change with no AX read-back, so it is **always**
+  dispatched-unverified and explicitly never claims activation; a rejected raise
+  refuses.
+- Ambiguity (>1 window with no/over-matching `--window` selector) **refuses**
+  rather than mutating an arbitrary window — mirrors `click`'s ambiguity gate.
+
+*Live-verified* on a backgrounded TextEdit, proven by ghosthands' own read-back
+(not an external tool): `move` reported `verified: (2869,103 673×439) →
+(3000,300 673×439)` (position changed, size untouched); `resize` reported
+`verified: (3000,300 673×439) → (3000,300 800×550)` (size changed, position
+untouched); a follow-up `windows` listing confirmed the final frame.
+
+**Known limitations (surfaced, not hidden)**
+- `window raise` z-order has no reliable AX read-back → always dispatched-
+  unverified (honest, never faked). OS position/size **clamping** is reported
+  with the real landed frame, never as a false verified. Off-screen / Space-
+  shifted windows map to "off-screen"; a nil CGWindowID reads as `id=?`, never
+  fabricated. Clamped/dispatched share exit 0 with verified (honesty is in the
+  text, matching the act/pixel tier convention — only refuse is nonzero). Window
+  verbs are not yet wired into record/replay or the MCP tool surface (follow-up).
+
+**Tests:** 280 hermetic total (+34 window). Honesty review PASS; merged on `main`
+(build + 280 green, additive `Errors.swift` conflict with `install` resolved
+keep-both); the window verbs were live-verified before push.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.5.0-m4 — 2026-06-18
 
 M4 hard surfaces. New verbs that reach past the AX action set, each honest about
