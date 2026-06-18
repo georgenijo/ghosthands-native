@@ -125,6 +125,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than right-click a guessed point — a blind poke has no
     /// element geometry to vouch for it.
     case noElementFrame(name: String)
+    /// `scroll` found no scrollable area to act on — no `AXScrollArea` matched the
+    /// `--in <name>` selector, or the app's frontmost window exposes none. We
+    /// REFUSE rather than post a wheel into the void (the scroll tier's honesty
+    /// boundary: nothing to move, nothing to witness).
+    case noScrollArea(app: String, named: String?)
 
     public var description: String {
         switch self {
@@ -239,6 +244,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "\(name.debugDescription) advertises no AXShowMenu and exposes "
                 + "no readable frame — refusing to right-click a guessed point "
                 + "(no element geometry to aim at)"
+        case let .noScrollArea(app, named):
+            if let named {
+                return "no scroll area named \(named.debugDescription) in \(app) — "
+                    + "refusing to scroll (nothing scrollable matched --in)"
+            }
+            return "no scroll area found in \(app)'s frontmost window — refusing to "
+                + "scroll (the window exposes no AXScrollArea to move)"
         }
     }
 }
