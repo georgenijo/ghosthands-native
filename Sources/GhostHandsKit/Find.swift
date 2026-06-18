@@ -69,6 +69,7 @@ extension GhostHands {
             // on-screen control.
             var o = ElementSearchOptions()
             o.excludeRoles = Finder.excludedRoles
+            o.maxDepth = Finder.maxSearchDepth   // cycle/stack-overflow guard
             return root.searchElements(matching: query, options: o)
                 .map { Finder.facts(of: $0) }
                 .filter { NameMatch.matches($0, query: query) }

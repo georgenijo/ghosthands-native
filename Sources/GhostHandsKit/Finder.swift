@@ -272,10 +272,21 @@ enum Finder {
             frame: element.frame())   // real AX geometry; nil when AX gives none
     }
 
+    /// A hard recursion bound for the AX walk. AXorcist's
+    /// `searchElementsRecursively` only honors `maxDepth` when it is > 0 — left at
+    /// 0 (the default) it recurses with NO limit, so a CYCLIC AX subtree (a child
+    /// that points back at an ancestor — which real apps, e.g. Calculator on macOS
+    /// 26, do expose) recurses until the stack overflows and the process dies with
+    /// SIGSEGV instead of returning an honest refuse. 100 is far deeper than any
+    /// real UI (trees are rarely past ~40) yet trivially below the overflow point,
+    /// so it bounds a cycle to 100 frames and still finds every genuine control.
+    static let maxSearchDepth = 100
+
     private static func options() -> ElementSearchOptions {
         var o = ElementSearchOptions()
         o.excludeRoles = excludedRoles
         o.enabledOnly = true   // never press a disabled control (it would no-op)
+        o.maxDepth = maxSearchDepth   // cycle/stack-overflow guard (see above)
         return o
     }
 
@@ -336,6 +347,7 @@ enum Finder {
         var o = ElementSearchOptions()
         o.excludeRoles = excludedRoles
         o.enabledOnly = false
+        o.maxDepth = maxSearchDepth   // cycle/stack-overflow guard (see options())
         return o
     }
 
