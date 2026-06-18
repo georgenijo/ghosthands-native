@@ -130,6 +130,12 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than post a wheel into the void (the scroll tier's honesty
     /// boundary: nothing to move, nothing to witness).
     case noScrollArea(app: String, named: String?)
+    /// `extract` found no tabular container to read — no `AXTable`/`AXOutline`/
+    /// `AXList` matched the `--in <name>` selector, or the app's frontmost window
+    /// exposes none. We REFUSE rather than emit a fabricated row (the extract
+    /// tier's honesty boundary: a MISSING table is a refuse, distinct from a
+    /// present-but-empty table, which is honest empty output).
+    case noTabularData(app: String, named: String?)
 
     public var description: String {
         switch self {
@@ -251,6 +257,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             }
             return "no scroll area found in \(app)'s frontmost window — refusing to "
                 + "scroll (the window exposes no AXScrollArea to move)"
+        case let .noTabularData(app, named):
+            if let named {
+                return "no table/outline/list named \(named.debugDescription) in "
+                    + "\(app) — refusing to extract (nothing tabular matched --in)"
+            }
+            return "no table/outline/list found in \(app)'s frontmost window — "
+                + "refusing to extract (the window exposes no AXTable/AXOutline/AXList)"
         }
     }
 }
