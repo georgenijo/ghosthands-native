@@ -37,6 +37,10 @@ struct GhostHandsCLI {
             runFind(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
+        case "click-at":
+            await runClickAt(Array(args.dropFirst()))
+        case "drag":
+            await runDrag(Array(args.dropFirst()))
         default:
             usage()
         }
@@ -249,6 +253,68 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - click-at (pixel)
+
+    @MainActor
+    static func runClickAt(_ rest: [String]) async {
+        guard rest.count >= 3 else { usage() }
+        guard let x = Double(rest[0]) else { failBadCoord("click-at", rest[0]) }
+        guard let y = Double(rest[1]) else { failBadCoord("click-at", rest[1]) }
+        let appSpec = rest[2]
+        do {
+            let outcome = try await GhostHands.clickAt(x: x, y: y, appSpec: appSpec)
+            print(reportPixel(outcome))
+        } catch let error as GhostHandsError {
+            fail("click-at", error)
+        } catch {
+            failUnexpected("click-at")
+        }
+    }
+
+    // MARK: - drag (pixel)
+
+    @MainActor
+    static func runDrag(_ rest: [String]) async {
+        guard rest.count >= 5 else { usage() }
+        guard let x1 = Double(rest[0]) else { failBadCoord("drag", rest[0]) }
+        guard let y1 = Double(rest[1]) else { failBadCoord("drag", rest[1]) }
+        guard let x2 = Double(rest[2]) else { failBadCoord("drag", rest[2]) }
+        guard let y2 = Double(rest[3]) else { failBadCoord("drag", rest[3]) }
+        let appSpec = rest[4]
+        do {
+            let outcome = try await GhostHands.drag(x1: x1, y1: y1, x2: x2, y2: y2,
+                                                    appSpec: appSpec)
+            print(reportPixel(outcome))
+        } catch let error as GhostHandsError {
+            fail("drag", error)
+        } catch {
+            failUnexpected("drag")
+        }
+    }
+
+    /// Honest one-liner for a pixel poke. VERIFIED quotes the observed pixel diff;
+    /// DISPATCHED-UNVERIFIED says plainly the event was dispatched but no pixel
+    /// change was observed (or could not be observed) — exits 0, never a success
+    /// claim. Pixel mode is more visible / less guaranteed than the AX verbs.
+    static func reportPixel(_ o: PixelOutcome) -> String {
+        let at = "(\(Int(o.x)),\(Int(o.y)))"
+        if o.verified {
+            let pct = String(format: "%.1f%%", o.changedFraction * 100)
+            return "\(o.verb) \(at) in \(o.app) — verified: pixel diff at \(at): "
+                + "\(pct) of region changed"
+        }
+        if !o.observable {
+            return "\(o.verb) \(at) in \(o.app) — event dispatched; could not observe "
+                + "(Screen Recording not granted — effect unverified)"
+        }
+        return "\(o.verb) \(at) in \(o.app) — event dispatched; no observable pixel "
+            + "change (effect unverified)"
+    }
+
+    static func failBadCoord(_ verb: String, _ raw: String) -> Never {
+        fail(verb, .badCoordinate(raw))
+    }
+
     // MARK: - failure helpers
 
     static func fail(_ verb: String, _ error: GhostHandsError) -> Never {
@@ -274,6 +340,8 @@ struct GhostHandsCLI {
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
+          ghosthands click-at <x> <y> <app>           left click at a GLOBAL screen point (pixel, verify-by-diff)
+          ghosthands drag <x1> <y1> <x2> <y2> <app>   press-move-release between two GLOBAL points (pixel)
           ghosthands version
 
           <action> for `act` = open | confirm | pick | show-menu | cancel | raise | increment | decrement
@@ -287,6 +355,8 @@ struct GhostHandsCLI {
           ghosthands snapshot Calculator --json
           ghosthands find "7" Calculator
           ghosthands shot Calculator /tmp/calc.png
+          ghosthands click-at 480 300 Calculator
+          ghosthands drag 100 200 400 200 Preview
 
         Honesty: every verb reports observed evidence only.
           - click is VERIFIED only on an observed change (incl. a named sibling witness,
@@ -300,6 +370,13 @@ struct GhostHandsCLI {
             observable (e.g. raise, show-menu) land as dispatched-unverified, never faked.
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
+          - click-at / drag are the PIXEL tier (no AX element; coords from the caller).
+            They post the mouse events straight to the app's pid (cursor-less,
+            background-capable) and VERIFY by a screenshot diff of the click
+            neighborhood: VERIFIED only on an observed pixel change; otherwise the
+            event is dispatched-unverified (NEVER success), and they REFUSE a point
+            outside the target window. Pixel mode is MORE visible / less guaranteed
+            than the AX verbs — prefer click/act when an AX element exists.
         """
         FileHandle.standardError.write(Data((text + "\n").utf8))
         exit(2)
