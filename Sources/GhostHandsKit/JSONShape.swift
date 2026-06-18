@@ -418,6 +418,16 @@ extension JSONResult {
                             ("polls", .int(o.polls))])
     }
 
+    public static func fromWebWait(_ o: WaitOutcome, port: Int) -> JSONResult {
+        JSONResult(verb: "web wait", status: .ok, app: o.app, target: o.name,
+                   evidence: "\(o.wantedGone ? "met (gone)" : "met") after "
+                       + "\(String(format: "%.2f", o.elapsed))s",
+                   fields: [("wantedGone", .bool(o.wantedGone)),
+                            ("elapsed", .double(o.elapsed)),
+                            ("polls", .int(o.polls)),
+                            ("port", .int(port))])
+    }
+
     // MARK: assert (pass | fail)
 
     public static func fromAssert(_ o: GhostHands.AssertOutcome) -> JSONResult {

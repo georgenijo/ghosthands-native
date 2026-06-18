@@ -139,7 +139,19 @@ auto-target it (no `--debug-port`, browser arg optional). `web close` terminates
 it (plain SIGTERM) and removes the temp profile — zero leftovers. Live-verified
 end-to-end with George's real Brave running concurrently: the real default
 profile was NEVER touched (the throwaway ran on its own temp profile, and close
-killed only the throwaway pid). Remaining: #10 → #8 → #11.
+killed only the throwaway pid).
+
+**#10 ✅ shipped** — `web wait --text/--url/--selector(+--gone)/--load
+domcontentloaded|networkidle` page-side condition waits over CDP, the web analogue
+of AX `wait`: hard wall-clock deadline + the same deadline fence, elapsed/poll
+evidence, and a timeout that REFUSES (`waitTimeout`, never a fabricated met).
+networkidle uses an honest page-side quiet-network heuristic (readyState complete
++ resource-timing idle window) since the CDP session has no event stream.
+Live-verified: a full example.com→iana navigation + content-appearance flow
+sequenced with `web wait` alone — no `curl`, no `web eval` poll loops.
+
+**All three P0s (#7 + #9 + #10) shipped green.** Remaining (P1): #8 → #11, then the
+#7 see-the-words backup.
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the

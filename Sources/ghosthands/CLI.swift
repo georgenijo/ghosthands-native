@@ -379,6 +379,7 @@ struct GhostHandsCLI {
         switch sub {
         case "open": await runWebOpen(tail)
         case "close": await runWebClose(tail)
+        case "wait": await runWebWait(tail)
         case "read": await runWebRead(tail)
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
@@ -468,6 +469,96 @@ struct GhostHandsCLI {
             fail("web close", error)
         } catch {
             failUnexpected("web close")
+        }
+    }
+
+    // MARK: - web wait (page-side condition waits, CDP)
+
+    @MainActor
+    static func runWebWait(_ rest: [String]) async {
+        // web wait <one of --text/--url/--selector/--load> [browser]
+        //          [--gone] [--timeout s] [--interval ms] [--cdp|--debug-port N] [--relaunch]
+        let args = scanJSON(rest)
+        var lens: WebLens = .auto
+        var parsedPort: Int?
+        var relaunch = false
+        var gone = false
+        var timeout: TimeInterval = 5
+        var interval: TimeInterval = 0.2
+        var condFlags: [(flag: String, value: String)] = []
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--cdp": lens = .cdp; i += 1
+            case "--ax": lens = .ax; i += 1
+            case "--relaunch": relaunch = true; i += 1
+            case "--gone": gone = true; i += 1
+            case "--debug-port":
+                if i + 1 < args.count, let p = Int(args[i + 1]) { parsedPort = p; i += 2 }
+                else { i += 1 }
+            case "--timeout":
+                let raw = i + 1 < args.count ? args[i + 1] : nil
+                guard let s = raw.flatMap(Double.init), s.isFinite, s > 0 else {
+                    failWaitArg("--timeout", raw)
+                }
+                timeout = s; i += 2
+            case "--interval":
+                let raw = i + 1 < args.count ? args[i + 1] : nil
+                guard let ms = raw.flatMap(Double.init), ms.isFinite, ms >= 0 else {
+                    failWaitArg("--interval", raw)
+                }
+                interval = ms / 1000; i += 2
+            case "--text", "--url", "--selector", "--load":
+                guard i + 1 < args.count else { usage() }
+                condFlags.append((args[i], args[i + 1])); i += 2
+            default: positional.append(args[i]); i += 1
+            }
+        }
+        // Exactly one condition flag — zero or many is a usage refuse (exit 2).
+        guard condFlags.count == 1 else {
+            refuse("web wait", message: "give exactly one condition: "
+                + "--text <substr> | --url <glob> | --selector <css> [--gone] | "
+                + "--load domcontentloaded|networkidle", code: 2)
+        }
+        let cond = condFlags[0]
+        // --gone is only meaningful for --selector; reject it elsewhere (honest).
+        if gone, cond.flag != "--selector" {
+            refuse("web wait", message: "--gone only applies to --selector", code: 2)
+        }
+        let kind: WebWaitKind
+        switch cond.flag {
+        case "--text": kind = .text(cond.value)
+        case "--url": kind = .url(cond.value)
+        case "--selector": kind = .selector(cond.value, gone: gone)
+        case "--load":
+            guard let state = WebLoadState(rawValue: cond.value) else {
+                refuse("web wait", message: "--load must be domcontentloaded or "
+                    + "networkidle (got \(cond.value.debugDescription))", code: 2)
+            }
+            kind = .load(state)
+        default: usage()
+        }
+
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: positional.first, session: session) else { usage() }
+        do {
+            let (outcome, servedPort) = try await GhostHands.webWait(
+                kind: kind, browser: browser, lens: lens, debugPort: port,
+                relaunch: relaunch, timeout: timeout, interval: interval)
+            if jsonMode { JSONResult.fromWebWait(outcome, port: servedPort).emit() }
+            else {
+                let secs = String(format: "%.2f", outcome.elapsed)
+                print("\(outcome.name) met in \(outcome.app) — observed after \(secs)s "
+                    + "(\(outcome.polls) poll\(outcome.polls == 1 ? "" : "s")) "
+                    + "(via CDP, port \(servedPort))")
+            }
+        } catch let error as GhostHandsError {
+            failWebActuate("web wait", error)
+        } catch {
+            failUnexpected("web wait")
         }
     }
 
@@ -1819,6 +1910,7 @@ struct GhostHandsCLI {
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
           ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)
           ghosthands web close                                                       terminate the managed session + remove its throwaway profile
+          ghosthands web wait (--text <s> | --url <glob> | --selector <css> [--gone] | --load domcontentloaded|networkidle) [browser] [--timeout s] [--interval ms]   page-side wait; timeout REFUSES (like AX wait)
           ghosthands web read [browser] [--cdp|--ax] [--debug-port N] [--relaunch]   page digest; CDP read stamps @eN on each interactive element (auto: CDP when a debug port is open, else AX; browser optional with a managed session)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands web click "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click an element by @eN ref (from web read) or CSS selector (CDP-only), verified by navigation
@@ -1889,6 +1981,8 @@ struct GhostHandsCLI {
           ghosthands web open --headed "https://example.com/"   # then drive with no --debug-port:
           ghosthands web read                        # auto-targets the open session
           ghosthands web click "@e1"                 # …and @eN refs from that read
+          ghosthands web wait --url "*iana*"         # block until the click's nav lands
+          ghosthands web wait --text "Example Domain"  # …or until content appears
           ghosthands web close                       # tear it down (kills proc, removes temp profile)
           ghosthands web read Brave
           ghosthands web tabs Chrome
