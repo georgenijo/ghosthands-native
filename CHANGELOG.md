@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.1-m4 — 2026-06-18
+
+Two honest-but-limited tiers from 0.4.0 hardened. The web read tier now works on
+Chromium (the limitation that mattered most), and the pixel tier gains a real
+actuation path. Built in parallel in isolated worktrees, each through a
+Map→Implement→Review→Fix workflow; both reviewed PASS for honesty before merge.
+
+**Fixed / improved**
+- **web read now works on Chromium (Brave / Chrome).** Chromium builds its web
+  accessibility tree lazily, so 0.4.0 honestly reported "browser chrome only;
+  nothing to read" on Brave. We now set `AXManualAccessibility = true` on the
+  browser's AX application element before walking (in both `web read` and
+  `web tabs`, and on the fresh element inside each settle/retry, since a new
+  `AXUIElement` doesn't inherit the flag). The tree wakes; the page becomes
+  readable. AX-only — no CDP/DOM path. *Live-verified* on a backgrounded Brave:
+  `web read` returned the real page tree (163 elements off a YouTube tab, exit 0,
+  where 0.4.0 was inert). The honesty floor is structurally unchanged — the wake
+  is best-effort (returns Void, the `setValue` Bool is ignored, it injects no
+  nodes); `hasWebArea` and the `tabsNotExposed` refuse still derive from the real
+  post-wake tree, so a failed wake still reads empty / refuses and can never
+  fabricate a page. (Reviewer caught and we dropped an `AXEnhancedUserInterface`
+  set — it mutates foreign AppKit/Electron apps' UI mode on a *read*;
+  `AXManualAccessibility` is the narrow Chromium-specific opt-in.)
+- **pixel `--visible` HID mode — `click-at` / `drag` can now actually actuate.**
+  `CGEventPostToPid` does not actuate a backgrounded window (0.4.0 live-tested:
+  Calculator ignored it, honestly unverified). The new, explicitly-labelled
+  `--visible` mode posts a real HID click via `CGEvent.post(tap: .cghidEventTap)`:
+  save cursor → `CGWarpMouseCursorPosition` → down/interpolated-moves/up → warp
+  back + `CGAssociateMouseAndMouseCursorPosition`. The default stays the
+  cursor-less `CGEventPostToPid` best-effort path, unchanged.
+
+**Known limitations (surfaced, not hidden)**
+- **web tabs is still inert where the browser exposes no `AXTabGroup`.**
+  *Live-tested* on Brave: even after the wake, `web tabs` found no tab strip on
+  the AX tree and honestly **refused** (exit 1, "refusing to guess a tab list").
+  The wake exposes the *page* (AXWebArea), not necessarily the native tab strip;
+  background/inactive tabs may also not populate. A CDP/DOM path is the real fix
+  for tabs — still future, still AX-only here.
+- **pixel `--visible` is the labelled invisibility exception, and the OS wall is
+  real.** It moves/flickers the cursor and may foreground / steal focus —
+  `--help`, the `PixelMode` doc, and the verdict label all say so plainly; it is
+  NOT invisible. macOS routes the HID mouse to the SCREEN-frontmost window under
+  the point, so it cannot actuate a truly background window without raising it.
+  A review-flagged subtlety is disclosed in the label/help/doc: the verify-diff
+  measures the *target* AX-frontmost window while the HID lands on the
+  *screen-frontmost* window under the point, so on overlap the verdict reflects
+  the target window's repaint — it can only ever **under**-claim, never fake a
+  VERIFIED. The runtime HID path is not exercised in the hermetic suite (rails
+  forbid posting real HID events in tests); only the pure logic (flag parse, mode
+  selection, drag interpolation, verdict mapping) is unit-tested.
+
+**Tests:** 225 hermetic total (+14: 5 web wake, 9 pixel). Both tiers passed an
+adversarial honesty review inside their workflow; merged on `main` (build + 225
+tests green); the web wake was live-verified on a backgrounded Brave before push.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.4.0-m4 — 2026-06-18
 
 Four tiers built in parallel (isolated worktrees, merged into one tree): a

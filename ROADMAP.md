@@ -71,7 +71,8 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
 | Drag-and-drop (install app: DMG → Applications) | ❌ | ✅ | ❌ | ✅ | M4 |
 | Multi-monitor + window identity/management | ❌ | ✅ | ❌ | ✅ | M4 |
-| Web tier (tabs / bookmarks / read page) | ✅(cua) | ✅ | ~(AX-only) | ✅ | M4 (CDP = future) |
+| Web tier (read page) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |
+| Web tier (tabs / bookmarks) | ✅(cua) | ✅ | ~(no AXTabGroup) | ✅ | M4 (CDP = future) |
 | Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | M5 |
 | **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ✅ | ✅ | **done (M5 scaffold)** |
 
@@ -111,6 +112,16 @@ hands + eyes; whoever plugs in brings the brain.
 - **M4 — Hard surfaces** *(Layer 1, the credibility 20%).* Menu bar / Control
   Center, drag-and-drop (the "install an app" demo — prefer `cp -R` over GUI
   drag when possible), multi-monitor + window management, web tier.
+  *Progress (0.4.1):* **web read now works on Chromium** — a one-line
+  `AXManualAccessibility` wake on the browser app element makes Brave/Chrome
+  publish their `AXWebArea`; live-verified reading a real Brave page (163
+  elements), AX-only, honesty floor intact. `web tabs` still refuses where no
+  `AXTabGroup` is exposed (CDP path = future). **pixel `--visible` HID mode**
+  added — `click-at`/`drag` can actuate via a real `.cghidEventTap` click
+  (labelled exception: moves the cursor, may steal focus, OS routes to the
+  screen-front window — not invisible); default stays cursor-less best-effort.
+  *Still open in M4:* menu bar / Control Center, drag-install, multi-monitor +
+  window identity, web tabs/CDP.
 - **M5 — Pluggable + always-on (the endgame).** Expose the whole verb surface as
   an **MCP server** (plus the CLI + a Swift library) so **any agent** — Claude, a
   phone agent, anything — can plug in and drive the Mac. Long-lived daemon +
