@@ -58,6 +58,8 @@ struct GhostHandsCLI {
             runScroll(Array(args.dropFirst()))
         case "key":
             runKey(Array(args.dropFirst()))
+        case "clipboard", "clip":
+            runClipboard(Array(args.dropFirst()))
         case "install":
             await runInstall(Array(args.dropFirst()))
         case "replay":
@@ -913,6 +915,69 @@ struct GhostHandsCLI {
             + "not deliver to a non-focused / background app]"
     }
 
+    // MARK: - clipboard (read | write)
+
+    @MainActor
+    static func runClipboard(_ rest: [String]) {
+        guard let sub = rest.first else { usage() }
+        let tail = Array(rest.dropFirst())
+        switch sub {
+        case "read": runClipboardRead(tail)
+        case "write": runClipboardWrite(tail)
+        default: usage()
+        }
+    }
+
+    /// `clipboard read` — print the live pasteboard string verbatim. An empty /
+    /// absent string is NEVER fabricated: print nothing + an honest stderr note,
+    /// exit 0 (a blank clipboard is a real state, not a failure).
+    @MainActor
+    static func runClipboardRead(_ rest: [String]) {
+        let value = GhostHands.clipboardRead()
+        if let value, !value.isEmpty {
+            print(value)
+        } else {
+            FileHandle.standardError.write(Data("(clipboard empty / no text)\n".utf8))
+        }
+        // exit 0 (default) — reading a blank clipboard is not a failure.
+    }
+
+    /// `clipboard write <text>` — set the pasteboard, READ IT BACK, and report
+    /// honestly: VERIFIED only when the read-back equals the text, else
+    /// dispatched-unverified (the set was accepted but not observed — NEVER faked).
+    @MainActor
+    static func runClipboardWrite(_ rest: [String]) {
+        guard let text = rest.first else { usage() }
+        let outcome = GhostHands.clipboardWrite(text: text)
+        print(reportClipboard(outcome))
+        // exit 0 in both verdicts: a dispatched-unverified set is honest, not an
+        // error (mirrors set-value / key) — never a nonzero "failure" for a write
+        // AppKit accepted but we could not observe.
+    }
+
+    /// Honest one-liner for a clipboard write. VERIFIED quotes the read-back length
+    /// ("clipboard set, read back N chars"); DISPATCHED-UNVERIFIED states plainly
+    /// that AppKit accepted the set but the read-back differs / is absent (the word
+    /// 'unverified' is present) — exit 0, never a success claim.
+    static func reportClipboard(_ o: ClipboardOutcome) -> String {
+        if o.verified {
+            // The empty string is indistinguishable from "no text" to `clipboard
+            // read` (which collapses "" and nil into the "(clipboard empty / no
+            // text)" note). So an empty-intended write that reads back empty MUST
+            // be reported as a CLEAR — not "verified: read-back matches" — so the
+            // two halves agree on what "empty" means and never make contradictory
+            // honest claims about one unchanged pasteboard.
+            if o.intended.isEmpty && (o.readback ?? "").isEmpty {
+                return "clipboard cleared / now empty"
+            }
+            return "clipboard set, read back \(o.intended.count) chars — "
+                + "verified: read-back matches"
+        }
+        let was = o.readback.map { "read back \($0.count) chars" } ?? "read back empty"
+        return "clipboard set \(o.intended.count) chars via NSPasteboard — set accepted; "
+            + "\(was) (effect unverified)"
+    }
+
     // MARK: - install
 
     @MainActor
@@ -1101,6 +1166,8 @@ struct GhostHandsCLI {
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
           ghosthands scroll <app> <up|down|left|right> [amount] [--in <name>] [--visible]   scroll a list/scroll-area, verified by the scroll-bar position
           ghosthands key "<spec>" [app] [--visible]               post a keystroke/chord (e.g. return, cmd+s) — dispatched-unverified
+          ghosthands clipboard read                   print the current pasteboard string (UTF-8); empty → honest note, exit 0
+          ghosthands clipboard write "<text>"         set the pasteboard string, then READ IT BACK — verified by read-back
           ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
@@ -1136,6 +1203,8 @@ struct GhostHandsCLI {
           ghosthands key return Safari
           ghosthands key "cmd+shift+t" Chrome
           ghosthands key return                 (no app — posts to the frontmost app)
+          ghosthands clipboard read
+          ghosthands clipboard write "hello world"
           ghosthands install ~/Downloads/Foo.dmg
           ghosthands install ~/Downloads/Foo.dmg --dest ~/Applications --force
           ghosthands record /tmp/login.json type "alice" "Username" Safari
@@ -1252,6 +1321,15 @@ struct GhostHandsCLI {
                 NOT invisible — may FOREGROUND / steal focus, and the key goes to whatever
                 app is focused (an OS wall). With NO app spec, key uses this HID path on
                 the FRONTMOST app (there is no pid to post to).
+          - clipboard read prints the live NSPasteboard string verbatim (UTF-8); an
+            empty / absent string is NEVER fabricated — it prints nothing + an honest
+            stderr note "(clipboard empty / no text)" and exits 0 (a blank clipboard is
+            a real state). clipboard write sets the pasteboard string then READS IT BACK
+            off the live pasteboard: read-back == text ⇒ VERIFIED ("clipboard set, read
+            back N chars"); read-back != text (another process clobbered it, or a
+            pasteboard owner transformed/cleared it) ⇒ dispatched-unverified — the set
+            was accepted but not observed, NEVER a faked success. The NSPasteboard
+            setString boolean is never trusted; the read-back is the sole arbiter.
           - scroll scrolls a scroll-area / list and VERIFIES by the scroll-bar position.
             It resolves a container (--in <name> = a named AXScrollArea; else the focused
             element's enclosing scroll area; else the largest AXScrollArea in the frontmost
