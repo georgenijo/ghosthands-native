@@ -46,6 +46,39 @@ import ScreenCaptureKit
 ///    UNDER-claims (a late paint never fabricates a VERIFIED), so it is honest,
 ///    but the same poke can read verified on a fast app and unverified on a slow
 ///    one purely on paint latency.
+/// How a pixel poke is delivered. This is the INVISIBILITY axis of the contract.
+///
+/// - `.invisible` (DEFAULT): synthesize the events and deliver them straight to
+///   the target app's pid via `CGEventPostToPid` — cursor-less, no warp, no HID
+///   tap, background-capable best-effort. The on-screen pointer never moves. But
+///   `postToPid` is coordinate-only (no real OS hit-test): standard AppKit apps
+///   map the point to a view, while some non-AppKit / game / custom surfaces (and
+///   some plain AppKit windows that are not key) IGNORE it — the dispatch lands
+///   but actuates nothing, honestly reported as DISPATCHED-UNVERIFIED.
+///
+/// - `.visible` (LABELLED exception): warp the REAL cursor to the point and post
+///   the events through the HID tap (`.cghidEventTap`), so the WindowServer runs
+///   its true hit-test and actuates the window under the point — the path that
+///   lands on a backgrounded AppKit window `postToPid` could not reach. The
+///   trade-off, stated plainly: it MOVES / flickers the visible cursor, and
+///   macOS routes the HID mouse to whatever window is FRONTMOST under the point
+///   (an OS wall) — so `.visible` is NOT invisible, may FOREGROUND / steal focus,
+///   and cannot actuate a truly background window without raising it.
+///
+///   One honesty caveat specific to `.visible`: the verify-by-diff measures the
+///   TARGET app's AX-frontmost window (the one we bounds-checked and captured),
+///   but the HID click lands on whatever window is SCREEN-frontmost under the
+///   point. When windows OVERLAP these can be different windows, so the verdict
+///   reflects the TARGET window's repaint, NOT proof the HID landed on it. That
+///   mismatch only ever UNDER-claims (a foreign-window click reads as
+///   DISPATCHED-UNVERIFIED) — it can never fabricate a false VERIFIED.
+public enum PixelMode: Sendable, Equatable {
+    /// CGEventPostToPid, cursor-less best-effort (default).
+    case invisible
+    /// CGWarpMouseCursorPosition + .cghidEventTap — moves the real cursor.
+    case visible
+}
+
 public struct PixelOutcome: Sendable, Equatable {
     public let app: String
     /// The verb that ran ("click-at" / "drag"), for the report string.
@@ -62,9 +95,13 @@ public struct PixelOutcome: Sendable, Equatable {
     /// The measured changed-fraction of the diffed neighborhood (0 when not
     /// observable). Quoted in the VERIFIED evidence string.
     public let changedFraction: Double
+    /// The delivery mode used. `.visible` is surfaced in the report so a moved /
+    /// flickered cursor + possible focus steal is LABELLED, never silent.
+    public let mode: PixelMode
 
     public init(app: String, verb: String, x: Double, y: Double, dispatched: Bool,
-                verified: Bool, observable: Bool, changedFraction: Double) {
+                verified: Bool, observable: Bool, changedFraction: Double,
+                mode: PixelMode = .invisible) {
         self.app = app
         self.verb = verb
         self.x = x
@@ -73,6 +110,7 @@ public struct PixelOutcome: Sendable, Equatable {
         self.verified = verified
         self.observable = observable
         self.changedFraction = changedFraction
+        self.mode = mode
     }
 }
 
@@ -87,9 +125,11 @@ extension GhostHands {
     /// contract. Returns an outcome that is honest about VERIFIED vs DISPATCHED.
     @MainActor
     public static func clickAt(x: Double, y: Double, appSpec: String,
+                               mode: PixelMode = .invisible,
                                settle: TimeInterval = 0.12) async throws -> PixelOutcome {
         try await pixelPoke(verb: "click-at", start: CGPoint(x: x, y: y),
-                            end: CGPoint(x: x, y: y), appSpec: appSpec, settle: settle)
+                            end: CGPoint(x: x, y: y), appSpec: appSpec,
+                            mode: mode, settle: settle)
     }
 
     /// `drag <x1> <y1> <x2> <y2> <app>` — press at `(x1,y1)`, move (interpolated
@@ -99,15 +139,18 @@ extension GhostHands {
     @MainActor
     public static func drag(x1: Double, y1: Double, x2: Double, y2: Double,
                             appSpec: String,
+                            mode: PixelMode = .invisible,
                             settle: TimeInterval = 0.12) async throws -> PixelOutcome {
         try await pixelPoke(verb: "drag", start: CGPoint(x: x1, y: y1),
-                            end: CGPoint(x: x2, y: y2), appSpec: appSpec, settle: settle)
+                            end: CGPoint(x: x2, y: y2), appSpec: appSpec,
+                            mode: mode, settle: settle)
     }
 
     /// The shared dispatch+verify core for both pixel verbs.
     @MainActor
     static func pixelPoke(verb: String, start: CGPoint, end: CGPoint,
-                          appSpec: String, settle: TimeInterval) async throws -> PixelOutcome {
+                          appSpec: String, mode: PixelMode = .invisible,
+                          settle: TimeInterval) async throws -> PixelOutcome {
         // Bootstrap the WindowServer connection exactly once (same reason as
         // `shot`): CGS / ScreenCaptureKit / CGPreflight calls abort uncatchably
         // without it. Stays a background accessory — no focus steal, no cursor.
@@ -155,8 +198,11 @@ extension GhostHands {
         let windowID = resolver.windowID(from: axWindow)
         let before = await PixelCapture.captureWindow(cgWindowID: windowID)
 
-        // DISPATCH the events to the target pid (the invisible, cursor-less path).
-        postMouseSequence(start: start, end: end, pid: target.pid, isDrag: verb == "drag")
+        // DISPATCH the events. `.invisible` posts straight to the target pid
+        // (cursor-less); `.visible` warps the real cursor and posts via the HID
+        // tap so the WindowServer hit-tests and actuates the front window.
+        postMouseSequence(start: start, end: end, pid: target.pid,
+                          isDrag: verb == "drag", mode: mode)
 
         // Let the app paint, then capture AFTER off the SAME window id.
         if settle > 0 { try? await Task.sleep(nanoseconds: UInt64(settle * 1_000_000_000)) }
@@ -188,16 +234,44 @@ extension GhostHands {
 
         return PixelOutcome(app: target.name, verb: verb, x: end.x, y: end.y,
                             dispatched: true, verified: verified,
-                            observable: observable, changedFraction: fraction)
+                            observable: observable, changedFraction: fraction,
+                            mode: mode)
     }
 
-    /// Synthesize and POST the mouse event sequence to `pid` via
-    /// `CGEventPostToPid` — never the HID tap (which would warp the visible
-    /// cursor and route by screen geometry). For a drag we interpolate several
-    /// `.leftMouseDragged` events between the endpoints so a drag-and-drop target
-    /// sees a continuous drag rather than a single jump.
+    /// The number of interpolated drag steps (some targets ignore a single jump).
+    static let dragSteps = 8
+
+    /// Synthesize and POST the mouse event sequence for a poke.
+    ///
+    /// `.invisible` (default): deliver each event straight to `pid` via
+    /// `CGEventPostToPid` — never the HID tap (which would warp the visible cursor
+    /// and route by screen geometry). Cursor-less, background-capable best-effort.
+    ///
+    /// `.visible`: warp the REAL cursor to the point and post each event through
+    /// the HID tap (`.cghidEventTap`) so the WindowServer runs its true hit-test
+    /// and actuates the front window under the point. We save the cursor first and
+    /// restore it after, then re-associate the mouse so the physical pointer
+    /// recouples. This MOVES / flickers the visible cursor and lands on whatever
+    /// window is frontmost under the point — it is the LABELLED, NOT-invisible
+    /// exception.
+    ///
+    /// For a drag, both modes interpolate `.leftMouseDragged` events between the
+    /// endpoints so a drag-and-drop target sees a continuous drag, not a jump.
     @MainActor
-    static func postMouseSequence(start: CGPoint, end: CGPoint, pid: pid_t, isDrag: Bool) {
+    static func postMouseSequence(start: CGPoint, end: CGPoint, pid: pid_t,
+                                  isDrag: Bool, mode: PixelMode = .invisible) {
+        switch mode {
+        case .invisible:
+            postMouseSequenceInvisible(start: start, end: end, pid: pid, isDrag: isDrag)
+        case .visible:
+            postMouseSequenceVisible(start: start, end: end, isDrag: isDrag)
+        }
+    }
+
+    /// DEFAULT path: `CGEventPostToPid`, cursor-less, background-capable best-effort.
+    @MainActor
+    private static func postMouseSequenceInvisible(start: CGPoint, end: CGPoint,
+                                                   pid: pid_t, isDrag: Bool) {
         let src = CGEventSource(stateID: .hidSystemState)
 
         if let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown,
@@ -206,12 +280,7 @@ extension GhostHands {
         }
 
         if isDrag {
-            // Interpolate intermediate dragged points (some targets ignore a jump).
-            let steps = 8
-            for i in 1..<steps {
-                let t = Double(i) / Double(steps)
-                let p = CGPoint(x: start.x + (end.x - start.x) * t,
-                                y: start.y + (end.y - start.y) * t)
+            for p in PixelPath.interpolate(start: start, end: end, steps: dragSteps) {
                 if let moved = CGEvent(mouseEventSource: src, mouseType: .leftMouseDragged,
                                        mouseCursorPosition: p, mouseButton: .left) {
                     moved.postToPid(pid)
@@ -223,6 +292,55 @@ extension GhostHands {
                             mouseCursorPosition: end, mouseButton: .left) {
             up.postToPid(pid)
         }
+    }
+
+    /// LABELLED exception: warp the real cursor + post through `.cghidEventTap` so
+    /// the WindowServer hit-tests the front window under the point. Saves/restores
+    /// the cursor and re-associates the mouse afterwards. NOT invisible.
+    @MainActor
+    private static func postMouseSequenceVisible(start: CGPoint, end: CGPoint, isDrag: Bool) {
+        // Remember where the real pointer is so we can put it back.
+        let savedPos = CGEvent(source: nil)?.location ?? start
+        let src = CGEventSource(stateID: .hidSystemState)
+
+        // Warp to the press point, then post the down through the HID tap. After a
+        // warp the HID cursor is briefly decoupled from physical movement; a tiny
+        // settle (and re-association on restore) lets the event post at the warped
+        // point — the standard warp-then-post mitigation.
+        warp(to: start)
+        if let down = CGEvent(mouseEventSource: src, mouseType: .leftMouseDown,
+                              mouseCursorPosition: start, mouseButton: .left) {
+            down.post(tap: .cghidEventTap)
+        }
+
+        if isDrag {
+            for p in PixelPath.interpolate(start: start, end: end, steps: dragSteps) {
+                warp(to: p)
+                if let moved = CGEvent(mouseEventSource: src, mouseType: .leftMouseDragged,
+                                       mouseCursorPosition: p, mouseButton: .left) {
+                    moved.post(tap: .cghidEventTap)
+                }
+            }
+        }
+
+        warp(to: end)
+        if let up = CGEvent(mouseEventSource: src, mouseType: .leftMouseUp,
+                            mouseCursorPosition: end, mouseButton: .left) {
+            up.post(tap: .cghidEventTap)
+        }
+
+        // Put the real pointer back and recouple it to physical movement.
+        CGWarpMouseCursorPosition(savedPos)
+        CGAssociateMouseAndMouseCursorPosition(1)   // boolean_t (true)
+    }
+
+    /// Warp the on-screen cursor to `p` and settle briefly so the next HID-tap
+    /// post lands at the warped point (warp decouples the cursor momentarily).
+    @MainActor
+    private static func warp(to p: CGPoint) {
+        CGWarpMouseCursorPosition(p)
+        CGAssociateMouseAndMouseCursorPosition(1)   // boolean_t (true)
+        usleep(8000)   // ~8ms — the standard warp-then-post settle.
     }
 
     static func rectString(_ r: CGRect) -> String {
