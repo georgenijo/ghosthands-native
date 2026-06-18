@@ -108,6 +108,22 @@ in [`docs/STRESS-TEST-0.8.0.md`](./docs/STRESS-TEST-0.8.0.md). It earned two tic
 `click`) and **#6** (`web click` post-click DOM read-back so in-page toggles earn
 VERIFIED).
 
+**Web ergonomics parity (vs agent-browser).** The same 11-task battery was then run
+through **agent-browser 0.27.0** (native verbs only) as a head-to-head. Both cleared
+every browser task; agent-browser's two misses were structural (can't drive a native
+app, bundled Chromium can't play DRM video), and it printed `✓ Done` on a fill that
+silently no-op'd — ghosthands stayed verify-or-refuse throughout. Verdict: ghosthands
+already **wins on capability + honesty**, loses only on **driving ergonomics**. The gap
+is one thing — `web read` (look) and `web click`/`web fill` (act) don't share a handle,
+so every click costs a look + a hand-written selector, and name collisions refuse. Fix =
+**numbered `@ref` handles shared by read + act** (also the best answer to "semantic
+find"; a see-the-words backup folds in). Full comparison, plain-English explanation, and
+locked design: [`docs/WEB-PARITY.md`](./docs/WEB-PARITY.md). Work-list (all keep the
+honesty contract): **#7** `@ref` addressing (P0), **#9** managed `web open`/`web close`
+session (P0), **#10** page-side `web wait` (P0), **#8** form-control state in `web read`
+(P1), **#11** no-JS `web text/attr/count` (P1). Loop order: #7 → #9 → #10 → #8 → #11,
+with #5/#6 slotted where they touch the same files.
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.
