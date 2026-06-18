@@ -100,6 +100,14 @@ MenuBarExtra AXPress is a no-op) and the always-on daemon (issue #2, needs a des
 discussion). The other deferred forks: vision/OCR (#1), UI-test flow-runner (#3),
 packaging/notarization (#4).
 
+**Real-life stress test (0.8.0-m4):** a fresh zero-context agent drove ghosthands
+through 11 live web + cross-app tasks — **11/11, honest throughout, ~16s of tool time
+out of 439s (rest was page/network), no crashes/wedges, no fake successes.** Full report
+in [`docs/STRESS-TEST-0.8.0.md`](./docs/STRESS-TEST-0.8.0.md). It earned two tickets:
+**#5** (give `type`/`set-value` the same `--nth`/`--role`/`--text` disambiguators as
+`click`) and **#6** (`web click` post-click DOM read-back so in-page toggles earn
+VERIFIED).
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.
