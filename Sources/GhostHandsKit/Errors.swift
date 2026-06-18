@@ -83,6 +83,14 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// zero windows. We REFUSE rather than report "no windows" and mislead the
     /// caller into thinking the app is windowless when AX actually errored.
     case windowListUnreadable(app: String)
+    /// `navigate` was given a URL that, after trimming + https-prefixing, has no
+    /// parseable host — the refuse-on-malformed gate. We REFUSE rather than hand a
+    /// garbage string to `open`.
+    case malformedURL(String)
+    /// `navigate` could not even LAUNCH `/usr/bin/open` (a Process.run() failure).
+    /// REFUSE — the load was never issued. (A nonzero `open` EXIT is NOT this — it
+    /// is at most a hint and never a refuse; honesty comes from the read-back.)
+    case openFailed(reason: String)
 
     public var description: String {
         switch self {
@@ -165,6 +173,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "could not read the window list of \(app) — the AXWindows "
                 + "attribute returned an error (this is an AX read failure, NOT a "
                 + "windowless app; refusing to report 'no windows')"
+        case let .malformedURL(raw):
+            return "\(raw.debugDescription) is not a valid URL (no host after "
+                + "normalizing) — refusing to navigate to a malformed address"
+        case let .openFailed(reason):
+            return "could not launch the browser via open: \(reason)"
         }
     }
 }
