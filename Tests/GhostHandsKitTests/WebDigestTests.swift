@@ -12,9 +12,10 @@ final class WebDigestTests: XCTestCase {
 
     private func n(_ role: String, title: String? = nil, value: String? = nil,
                    id: String? = nil, enabled: Bool? = nil,
+                   frame: CGRect? = nil,
                    children: [WebNode] = []) -> WebNode {
         WebNode(facts: ElementFacts(role: role, title: title, identifier: id,
-                                    value: value, enabled: enabled),
+                                    value: value, enabled: enabled, frame: frame),
                 children: children)
     }
 
@@ -44,10 +45,12 @@ final class WebDigestTests: XCTestCase {
                         n("AXLink", title: "Home"),
                         n("AXLink", title: "Docs"),
                     ]),
-                    n("AXStaticText", value: "This domain is for examples."),
+                    n("AXStaticText", value: "This domain is for examples.",
+                      frame: CGRect(x: 24, y: 120, width: 300, height: 18)),
                     n("AXStaticText", value: ""),          // empty → dropped
-                    n("AXSearchField", title: "Search the site"),
-                    n("AXButton", title: "Submit", enabled: false),
+                    n("AXSearchField", title: "Search the site",
+                      frame: CGRect(x: 412, y: 240, width: 86, height: 32)),
+                    n("AXButton", title: "Submit", enabled: false),  // no frame → "frame:?"
                 ]),
             ]),
         ])
@@ -177,9 +180,12 @@ final class WebDigestTests: XCTestCase {
     // MARK: - render shape
 
     func testRenderLineShape() {
+        // An interactive control with no readable AX frame renders role + quoted
+        // name, then the honest "frame:?" marker (it IS a target, AX gave no
+        // geometry) — never a fabricated box.
         let entry = WebDigest.Entry(
             facts: ElementFacts(role: "AXLink", title: "Sign in"), depth: 0)
-        XCTAssertEqual(WebDigest.line(entry), "AXLink \"Sign in\"")
+        XCTAssertEqual(WebDigest.line(entry), "AXLink \"Sign in\" frame:?")
     }
 
     func testRenderValueWhenDistinct() {
@@ -189,6 +195,82 @@ final class WebDigestTests: XCTestCase {
         let line = WebDigest.line(entry)
         XCTAssertTrue(line.hasPrefix("  AXTextField \"Email\""))
         XCTAssertTrue(line.contains("value=\"a@b.com\""))
+    }
+
+    // MARK: - render shape: WHERE (on-screen frame) — HONEST, never fabricated
+
+    func testInteractiveControlLineCarriesRealFrame() {
+        // An actionable control with a REAL AX frame renders its coordinates
+        // verbatim — the WHERE the brain needs to pixel-target it.
+        let entry = WebDigest.Entry(
+            facts: ElementFacts(role: "AXButton", title: "Search",
+                                frame: CGRect(x: 412, y: 240, width: 86, height: 32)),
+            depth: 0)
+        let line = WebDigest.line(entry)
+        XCTAssertEqual(line, "AXButton \"Search\" @(412,240 86×32)")
+        XCTAssertTrue(line.contains("@(412,240 86×32)"))   // the real frame, rendered
+    }
+
+    func testMissingFrameShownHonestly() {
+        // An actionable control whose AX exposes NO position/size is MARKED, not
+        // dropped and never given made-up coordinates.
+        let entry = WebDigest.Entry(
+            facts: ElementFacts(role: "AXLink", title: "Docs", frame: nil),
+            depth: 0)
+        let line = WebDigest.line(entry)
+        XCTAssertTrue(line.contains("frame:?"))   // no readable frame → marked
+        XCTAssertFalse(line.contains("@("))       // never a fabricated box
+        XCTAssertEqual(line, "AXLink \"Docs\" frame:?")
+    }
+
+    func testStaticTextOmitsFrameForReadability() {
+        // Static text is read for context, not clicked — coords are omitted by
+        // design (it isn't a pixel target), distinct from "frame:?" (a target
+        // whose geometry AX withheld). Even WITH a real frame present, text omits.
+        let entry = WebDigest.Entry(
+            facts: ElementFacts(role: "AXStaticText", value: "Hello",
+                                frame: CGRect(x: 10, y: 10, width: 200, height: 18)),
+            depth: 0)
+        let line = WebDigest.line(entry)
+        XCTAssertFalse(line.contains("@("))        // not a target → no coords
+        XCTAssertFalse(line.contains("frame:?"))   // and NOT marked missing
+    }
+
+    func testFrameStringFormat() {
+        XCTAssertEqual(
+            WebDigest.frameString(CGRect(x: 1, y: 2, width: 3, height: 4)),
+            "@(1,2 3×4)")
+    }
+
+    func testFrameStringRoundsFractionalCoords() {
+        // Real AX positions/sizes can be fractional; the token rounds to whole px
+        // (no fabricated precision), staying honest about what was read.
+        XCTAssertEqual(
+            WebDigest.frameString(CGRect(x: 411.6, y: 239.4, width: 85.5, height: 32.2)),
+            "@(412,239 86×32)")
+    }
+
+    func testDigestRenderShowsFramesForControlsHonestly() {
+        // Over the full fabricated page: the framed search field shows its real
+        // coords, the frameless disabled button is marked "frame:?", and the
+        // static-text line carries NEITHER (omitted by design, not invented).
+        let render = WebDigest.render(WebDigest.entries(in: [browserWindow()]))
+        let lines = render.split(separator: "\n").map(String.init)
+
+        let search = lines.first { $0.contains("\"Search the site\"") }
+        XCTAssertNotNil(search)
+        XCTAssertTrue(search!.contains("@(412,240 86×32)"))   // real frame rendered
+
+        let submit = lines.first { $0.contains("\"Submit\"") }
+        XCTAssertNotNil(submit)
+        XCTAssertTrue(submit!.contains("(disabled)"))         // existing flag intact
+        XCTAssertTrue(submit!.contains("frame:?"))            // frameless → marked
+        XCTAssertFalse(submit!.contains("@("))                // never fabricated
+
+        let text = lines.first { $0.contains("This domain is for examples.") }
+        XCTAssertNotNil(text)
+        XCTAssertFalse(text!.contains("@("))                  // text: no coords
+        XCTAssertFalse(text!.contains("frame:?"))             // nor a missing mark
     }
 
     // MARK: - tabs
