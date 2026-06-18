@@ -338,18 +338,46 @@ enum Finder {
         case element(Element, ElementFacts)
         case ambiguous([String])
         case none
+        /// A `--nth <i>` locator pinned an index outside the surviving-candidate
+        /// range — REFUSE (never clamp). Carries the requested index + the count
+        /// the caller can quote.
+        case indexOutOfRange(requested: Int, count: Int)
     }
 
     /// Resolve over an arbitrary candidate gate (click uses the `isActionable`
     /// default; type/set-value/doubleclick pass their widened gate). Ambiguity
     /// (>1 distinct control) is refused exactly as in the click path.
+    ///
+    /// `locator` is the OPT-IN disambiguation the caller stated via flags. With
+    /// the default `.none` this is byte-for-byte the original path: NO `refine`
+    /// runs, `NameMatch.resolve` decides, and an ambiguous name still refuses.
+    /// When a flag IS set, candidates are gathered the SAME way (the bounded,
+    /// cycle-safe `candidateMatches`) and handed to the pure `Locator.refine`,
+    /// which narrows by --role/--text and tie-breaks by --nth (out of range →
+    /// `.indexOutOfRange`), else falls through to the same `NameMatch.resolve`.
     static func resolve(named name: String, under root: Element,
-                        accept: (ElementFacts) -> Bool = isActionable) -> Resolved {
+                        accept: (ElementFacts) -> Bool = isActionable,
+                        locator: LocatorSpec = .none) -> Resolved {
         let pairs = candidateMatches(named: name, under: root, accept: accept)
-        switch NameMatch.resolve(pairs.map { $0.1 }, query: name) {
-        case let .unique(i): return .element(pairs[i].0, pairs[i].1)
+
+        // NO-FLAG PATH — identical to today. Bypass `refine` entirely so the
+        // pre-flag behavior is preserved exactly (refuse-on-ambiguous intact).
+        guard !locator.isEmpty else {
+            switch NameMatch.resolve(pairs.map { $0.1 }, query: name) {
+            case let .unique(i): return .element(pairs[i].0, pairs[i].1)
+            case let .ambiguous(labels): return .ambiguous(labels)
+            case .none: return .none
+            }
+        }
+
+        // FLAG PATH — pure refinement over the SAME candidate set.
+        switch Locator.refine(pairs.map { $0.1 }, query: name,
+                              role: locator.role, text: locator.text, nth: locator.nth) {
+        case let .one(i): return .element(pairs[i].0, pairs[i].1)
         case let .ambiguous(labels): return .ambiguous(labels)
         case .none: return .none
+        case let .indexOutOfRange(requested, count):
+            return .indexOutOfRange(requested: requested, count: count)
         }
     }
 

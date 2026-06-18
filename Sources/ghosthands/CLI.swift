@@ -73,15 +73,50 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - locator flags (shared by the named-control verbs)
+
+    /// Scan the OPT-IN disambiguator flags out of `args` (in any order, mirroring
+    /// the `--in` / `--window` / `--visible` flag loops) and return the parsed
+    /// `LocatorSpec` plus the remaining positionals in order:
+    ///   --nth <i>       pick the i-th match (0-based, deterministic tree order)
+    ///   --role <AXRole> restrict candidates to a given AX role
+    ///   --text <substr> restrict candidates to those whose label/value contains <substr>
+    /// With NONE of these present the spec is `.none` and the resolve path is
+    /// byte-for-byte the pre-flag behavior (refuse-on-ambiguous intact). A
+    /// `--nth` whose value is not an integer is left UNSET (the value token is
+    /// consumed but ignored) — the resolve then refuses on ambiguity as if no
+    /// `--nth` were given, never silently picking index 0.
+    static func parseLocator(_ args: [String]) -> (locator: LocatorSpec, positional: [String]) {
+        var role: String?
+        var text: String?
+        var nth: Int?
+        var positional: [String] = []
+        var i = 0
+        while i < args.count {
+            switch args[i] {
+            case "--nth":
+                if i + 1 < args.count { nth = Int(args[i + 1]); i += 2 } else { i += 1 }
+            case "--role":
+                if i + 1 < args.count { role = args[i + 1]; i += 2 } else { i += 1 }
+            case "--text":
+                if i + 1 < args.count { text = args[i + 1]; i += 2 } else { i += 1 }
+            default:
+                positional.append(args[i]); i += 1
+            }
+        }
+        return (LocatorSpec(role: role, text: text, nth: nth), positional)
+    }
+
     // MARK: - click
 
     @MainActor
     static func runClick(_ rest: [String]) {
-        guard rest.count >= 2 else { usage() }
-        let name = rest[0]
-        let appSpec = rest[1]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 2 else { usage() }
+        let name = pos[0]
+        let appSpec = pos[1]
         do {
-            let outcome = try GhostHands.click(name: name, appSpec: appSpec)
+            let outcome = try GhostHands.click(name: name, appSpec: appSpec, locator: locator)
             print(report(outcome, name: name))
         } catch let error as GhostHandsError {
             fail("click", error)
@@ -105,12 +140,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runType(_ rest: [String]) {
-        guard rest.count >= 3 else { usage() }
-        let text = rest[0]
-        let field = rest[1]
-        let appSpec = rest[2]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 3 else { usage() }
+        let text = pos[0]
+        let field = pos[1]
+        let appSpec = pos[2]
         do {
-            let outcome = try GhostHands.type(text: text, field: field, appSpec: appSpec)
+            let outcome = try GhostHands.type(text: text, field: field, appSpec: appSpec,
+                                              locator: locator)
             print(reportValue(outcome))
         } catch let error as GhostHandsError {
             fail("type", error)
@@ -123,12 +160,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runSetValue(_ rest: [String]) {
-        guard rest.count >= 3 else { usage() }
-        let value = rest[0]
-        let control = rest[1]
-        let appSpec = rest[2]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 3 else { usage() }
+        let value = pos[0]
+        let control = pos[1]
+        let appSpec = pos[2]
         do {
-            let outcome = try GhostHands.setValue(value: value, control: control, appSpec: appSpec)
+            let outcome = try GhostHands.setValue(value: value, control: control,
+                                                  appSpec: appSpec, locator: locator)
             print(reportValue(outcome))
         } catch let error as GhostHandsError {
             fail("set-value", error)
@@ -157,11 +196,12 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runDoubleClick(_ rest: [String]) {
-        guard rest.count >= 2 else { usage() }
-        let name = rest[0]
-        let appSpec = rest[1]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 2 else { usage() }
+        let name = pos[0]
+        let appSpec = pos[1]
         do {
-            let outcome = try GhostHands.doubleclick(name: name, appSpec: appSpec)
+            let outcome = try GhostHands.doubleclick(name: name, appSpec: appSpec, locator: locator)
             print(reportAct(outcome))
         } catch let error as GhostHandsError {
             fail("doubleclick", error)
@@ -175,14 +215,17 @@ struct GhostHandsCLI {
     @MainActor
     static func runRightClick(_ rest: [String]) {
         // `--visible` may appear in any order (REUSE PixelFlags — only the pixel
-        // fallback honours it; the AX route is always invisible); the rest are
-        // positional: <name> <app>.
-        let (mode, pos) = PixelFlags.parse(rest)
+        // fallback honours it; the AX route is always invisible); the locator
+        // disambiguators (--role/--text/--nth) too; the rest are positional:
+        // <name> <app>. Parse PixelFlags first, then the locator off its leftovers.
+        let (mode, afterVisible) = PixelFlags.parse(rest)
+        let (locator, pos) = parseLocator(afterVisible)
         guard pos.count >= 2 else { usage() }
         let name = pos[0]
         let appSpec = pos[1]
         do {
-            let outcome = try GhostHands.rightClick(name: name, appSpec: appSpec, mode: mode)
+            let outcome = try GhostHands.rightClick(name: name, appSpec: appSpec, mode: mode,
+                                                    locator: locator)
             print(reportRightClick(outcome))
         } catch let error as GhostHandsError {
             fail("right-click", error)
@@ -221,12 +264,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runAct(_ rest: [String]) {
-        guard rest.count >= 3 else { usage() }
-        let action = rest[0]
-        let name = rest[1]
-        let appSpec = rest[2]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 3 else { usage() }
+        let action = pos[0]
+        let name = pos[1]
+        let appSpec = pos[2]
         do {
-            let outcome = try GhostHands.act(action: action, name: name, appSpec: appSpec)
+            let outcome = try GhostHands.act(action: action, name: name, appSpec: appSpec,
+                                             locator: locator)
             print(reportAct(outcome))
         } catch let error as GhostHandsError {
             // An unknown friendly action is a USAGE error (exit 2), distinct from
@@ -258,11 +303,12 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runFocus(_ rest: [String]) {
-        guard rest.count >= 2 else { usage() }
-        let name = rest[0]
-        let appSpec = rest[1]
+        let (locator, pos) = parseLocator(rest)
+        guard pos.count >= 2 else { usage() }
+        let name = pos[0]
+        let appSpec = pos[1]
         do {
-            let outcome = try GhostHands.focus(name: name, appSpec: appSpec)
+            let outcome = try GhostHands.focus(name: name, appSpec: appSpec, locator: locator)
             print(reportFocus(outcome))
         } catch let error as GhostHandsError {
             fail("focus", error)
@@ -1291,7 +1337,7 @@ struct GhostHandsCLI {
         ghosthands \(GhostHands.version) — honesty-first macOS computer-use core
 
         USAGE:
-          ghosthands click "<name>" <app>             press a named control (AX, cursor-less)
+          ghosthands click "<name>" <app> [--role <AXRole>] [--text <substr>] [--nth <i>]   press a named control (AX, cursor-less)
           ghosthands type "<text>" "<field>" <app>    set a text field's value, then read it back
           ghosthands set-value "<v>" "<ctl>" <app>    set a checkbox/slider/popup, then read it back
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
@@ -1332,6 +1378,9 @@ struct GhostHandsCLI {
 
         <app> = bundle id, pid, or (partial) app name. Examples:
           ghosthands click "New Folder" Finder
+          ghosthands click "Delete" Mail --role AXButton          (one role narrows the ambiguity)
+          ghosthands click "Add" "System Settings" --nth 1        (pick the 2nd of several "Add" controls)
+          ghosthands click "Tab" Safari --text "Inbox" --nth 0    (filter by label substring, then pin)
           ghosthands type "hello" "Search" Safari
           ghosthands set-value "on" "Wi-Fi" "System Settings"
           ghosthands doubleclick "report.pdf" Finder
@@ -1368,6 +1417,18 @@ struct GhostHandsCLI {
           ghosthands install ~/Downloads/Foo.dmg --dest ~/Applications --force
           ghosthands record /tmp/login.json type "alice" "Username" Safari
           ghosthands replay /tmp/login.json
+
+          Locator disambiguators (OPT-IN; click/type/set-value/act/focus/right-click/doubleclick):
+            --role <AXRole>  keep only candidates of this AX role (e.g. --role AXButton)
+            --text <substr>  keep only candidates whose label/value contains <substr>
+            --nth <i>        pick the i-th match (0-based, deterministic tree order)
+            With NO flag the behavior is UNCHANGED — a name matching >1 distinct control
+            still REFUSES (ambiguous). --role/--text only NARROW the set (an ambiguous
+            remainder is still refused); --nth is the EXPLICIT tie-break (out of range
+            REFUSES — never a silent guess). The caller states intent; the tool never picks.
+            Note: --nth indexes the RAW survivors (duplicate-render twins NOT collapsed),
+            so its valid indices can outnumber the "ambiguous — K controls" count, and the
+            index is a snapshot — a re-snapshot after a UI change can renumber it.
 
         Honesty: every verb reports observed evidence only.
           - click is VERIFIED only on an observed change (incl. a named sibling witness,

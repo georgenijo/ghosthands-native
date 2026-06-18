@@ -66,10 +66,11 @@ extension GhostHands {
     ///   but the value read back unchanged: the no-op trap, reported plainly.
     @MainActor
     public static func type(text: String, field: String, appSpec: String,
+                            locator: LocatorSpec = .none,
                             settle: TimeInterval = 0.15) throws -> ValueOutcome {
         try setValueImpl(rawValue: text, name: field, appSpec: appSpec,
                          verb: "typed", accept: Finder.isTextEntry,
-                         coerceForRole: false, settle: settle)
+                         coerceForRole: false, locator: locator, settle: settle)
     }
 
     /// `set-value "<value>" "<control-name>" <app>` — set a non-text control
@@ -79,10 +80,11 @@ extension GhostHands {
     /// setting a wrong value.
     @MainActor
     public static func setValue(value: String, control: String, appSpec: String,
+                                locator: LocatorSpec = .none,
                                 settle: TimeInterval = 0.15) throws -> ValueOutcome {
         try setValueImpl(rawValue: value, name: control, appSpec: appSpec,
                          verb: "set", accept: Finder.isSettable,
-                         coerceForRole: true, settle: settle)
+                         coerceForRole: true, locator: locator, settle: settle)
     }
 
     /// The shared resolve → set → fresh-read-back → verdict core for both verbs.
@@ -91,7 +93,8 @@ extension GhostHands {
     @MainActor
     static func setValueImpl(rawValue: String, name: String, appSpec: String,
                              verb: String, accept: (ElementFacts) -> Bool,
-                             coerceForRole: Bool, settle: TimeInterval) throws -> ValueOutcome {
+                             coerceForRole: Bool, locator: LocatorSpec = .none,
+                             settle: TimeInterval) throws -> ValueOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
         }
@@ -99,12 +102,15 @@ extension GhostHands {
 
         let element: Element
         let facts: ElementFacts
-        switch Finder.resolve(named: name, under: target.element, accept: accept) {
+        switch Finder.resolve(named: name, under: target.element, accept: accept,
+                              locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }

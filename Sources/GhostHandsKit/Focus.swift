@@ -48,6 +48,7 @@ extension GhostHands {
     ///   the focus could not be observed, reported plainly, never faked.
     @MainActor
     public static func focus(name: String, appSpec: String,
+                             locator: LocatorSpec = .none,
                              settle: TimeInterval = 0.15) throws -> FocusOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -58,12 +59,15 @@ extension GhostHands {
         let facts: ElementFacts
         // Same candidate gate as set-value/act: any settable, value-bearing or
         // actionable control (text fields, buttons, checkboxes, …) can be focused.
-        switch Finder.resolve(named: name, under: target.element, accept: Finder.isSettable) {
+        switch Finder.resolve(named: name, under: target.element, accept: Finder.isSettable,
+                              locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }

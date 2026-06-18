@@ -15,6 +15,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// The name matched more than one distinct on-screen control — refuse
     /// rather than press an arbitrary (possibly destructive) one.
     case ambiguousMatch(name: String, candidates: [String])
+    /// A `--nth <i>` locator pinned an index outside the matching-control range
+    /// (after any --role/--text filter). REFUSE — the disambiguators never make
+    /// the tool guess; an out-of-range index is a wrong-target signal, not a clamp.
+    case locatorIndexOutOfRange(name: String, requested: Int, count: Int)
     /// The element was found but rejected the AX action (no-op at the AX layer).
     case actionRejected(name: String, action: String)
     /// A `type` was requested into a secure (password) text field. Its value
@@ -162,7 +166,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .ambiguousMatch(name, candidates):
             return "\(name.debugDescription) is ambiguous — \(candidates.count) "
                 + "controls match (\(candidates.joined(separator: ", "))) — "
-                + "use a more specific name"
+                + "use a more specific name (or --role/--text to narrow, --nth to pick)"
+        case let .locatorIndexOutOfRange(name, requested, count):
+            return "--nth \(requested) is out of range for \(name.debugDescription) — "
+                + "only \(count) control(s) match (valid indices 0…\(max(count - 1, 0))) "
+                + "— refusing to guess a control"
         case let .actionRejected(name, action):
             return "\(action) rejected by \(name.debugDescription) — element "
                 + "found but did not accept the action"

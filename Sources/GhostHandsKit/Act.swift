@@ -52,6 +52,7 @@ extension GhostHands {
     /// honestly DISPATCHED-UNVERIFIED.
     @MainActor
     public static func doubleclick(name: String, appSpec: String,
+                                   locator: LocatorSpec = .none,
                                    settle: TimeInterval = 0.15) throws -> ActOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -60,12 +61,15 @@ extension GhostHands {
 
         let element: Element
         let facts: ElementFacts
-        switch Finder.resolve(named: name, under: target.element, accept: Finder.isOpenable) {
+        switch Finder.resolve(named: name, under: target.element, accept: Finder.isOpenable,
+                              locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }
@@ -95,6 +99,7 @@ extension GhostHands {
     /// action has no in-AX observable (the canonical case: raise / show-menu).
     @MainActor
     public static func act(action friendly: String, name: String, appSpec: String,
+                           locator: LocatorSpec = .none,
                            settle: TimeInterval = 0.15) throws -> ActOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -106,12 +111,15 @@ extension GhostHands {
 
         let element: Element
         let facts: ElementFacts
-        switch Finder.resolve(named: name, under: target.element, accept: Finder.isSettable) {
+        switch Finder.resolve(named: name, under: target.element, accept: Finder.isSettable,
+                              locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }

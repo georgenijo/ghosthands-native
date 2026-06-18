@@ -133,12 +133,17 @@ extension GhostHands {
     /// - throws `.accessibilityNotTrusted` if AX permission is missing,
     /// - throws `.elementNotFound` if no pressable control has that name,
     /// - throws `.ambiguousMatch` if more than one distinct control matches,
+    /// - throws `.locatorIndexOutOfRange` if a `--nth` locator is out of range,
     /// - throws `.actionRejected` if the control refuses AXPress,
     /// - otherwise returns an outcome that is honest about whether the effect
     ///   was *verified* (observed change) or merely *dispatched* (AX accepted,
     ///   effect not observable from the element).
+    ///
+    /// `locator` is the OPT-IN caller disambiguation (--role/--text/--nth). The
+    /// default `.none` is byte-for-byte the pre-flag behavior (refuse-on-ambiguous).
     @MainActor
     public static func click(name: String, appSpec: String,
+                             locator: LocatorSpec = .none,
                              settle: TimeInterval = 0.15) throws -> ClickOutcome {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -148,12 +153,14 @@ extension GhostHands {
 
         let element: Element
         let facts: ElementFacts
-        switch Finder.resolve(named: name, under: target.element) {
+        switch Finder.resolve(named: name, under: target.element, locator: locator) {
         case let .element(found, foundFacts):
             element = found
             facts = foundFacts
         case let .ambiguous(candidates):
             throw GhostHandsError.ambiguousMatch(name: name, candidates: candidates)
+        case let .indexOutOfRange(requested, count):
+            throw GhostHandsError.locatorIndexOutOfRange(name: name, requested: requested, count: count)
         case .none:
             throw GhostHandsError.elementNotFound(name: name, app: target.name)
         }
