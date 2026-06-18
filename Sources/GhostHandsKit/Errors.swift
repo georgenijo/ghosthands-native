@@ -149,6 +149,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// respond to. We REFUSE rather than fabricate a popup — there is nothing to
     /// read and nothing to dismiss (the dialog tier's honesty boundary).
     case noDialog(app: String)
+    /// `wait` polled to its deadline without ever OBSERVING the condition — the
+    /// element never appeared (or, with `--gone`, never disappeared). A timeout is
+    /// a REFUSE (nonzero exit), never a fabricated success: we only report met when
+    /// the condition is observed met (the wait tier's honesty boundary).
+    case waitTimeout(name: String, app: String, wantedGone: Bool, seconds: TimeInterval)
 
     public var description: String {
         switch self {
@@ -285,6 +290,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .noDialog(app):
             return "no modal sheet / alert / dialog found in \(app) — refusing to "
                 + "fabricate a popup (nothing to detect or dismiss)"
+        case let .waitTimeout(name, app, wantedGone, seconds):
+            let cond = wantedGone ? "to disappear" : "to appear"
+            return "timed out after \(String(format: "%g", seconds))s waiting for "
+                + "\(name.debugDescription) \(cond) in \(app) — condition never "
+                + "observed (refusing to report a met that did not happen)"
         }
     }
 }
