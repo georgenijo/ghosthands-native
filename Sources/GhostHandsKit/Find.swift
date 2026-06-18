@@ -63,16 +63,11 @@ extension GhostHands {
         let target = try Target.resolve(appSpec)
 
         func search(under root: Element) -> [ElementFacts] {
-            // NOT Finder.options(): no enabledOnly (static labels report
-            // nil/false enabled and would be dropped), no includeRoles. Only
-            // exclude menu noise so a hidden menu item doesn't masquerade as the
-            // on-screen control.
-            var o = ElementSearchOptions()
-            o.excludeRoles = Finder.excludedRoles
-            o.maxDepth = Finder.maxSearchDepth   // cycle/stack-overflow guard
-            return root.searchElements(matching: query, options: o)
-                .map { Finder.facts(of: $0) }
-                .filter { NameMatch.matches($0, query: query) }
+            // The shared PRESENCE read (NOT Finder.options(): no enabledOnly, so
+            // static labels and disabled controls still count; only menu noise
+            // excluded). The same path `assert`'s `observe` uses, so the two
+            // presence answers cannot drift.
+            Finder.presenceMatches(named: query, under: root).map { $0.1 }
         }
 
         var hits = FindResult.dedup(search(under: target.element))

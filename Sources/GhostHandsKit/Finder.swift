@@ -334,6 +334,33 @@ enum Finder {
         candidateMatches(named: name, under: root, accept: isActionable)
     }
 
+    /// The PRESENCE search options — the broad "what is ON SCREEN" gate shared by
+    /// `find` and the `assert` presence reads. Deliberately NOT `options()`: it
+    /// drops the `enabledOnly` filter so a visibly-present-but-DISABLED control
+    /// (a greyed-out "Save") is still counted, and a static label (which reports
+    /// nil/false enabled) is not dropped. Only menu noise is excluded so a hidden
+    /// menu item can't masquerade as the on-screen control. Still bounded +
+    /// cycle-safe via `maxDepth` (same as every sibling search).
+    private static func presenceOptions() -> ElementSearchOptions {
+        var o = ElementSearchOptions()
+        o.excludeRoles = excludedRoles
+        o.maxDepth = maxSearchDepth   // cycle/stack-overflow guard (see options())
+        return o
+    }
+
+    /// (element, facts) for every control matching `name` that is PRESENT on
+    /// screen — static labels and DISABLED controls included. The single
+    /// presence-read core shared by `find`, `assert`'s `observe`, and the
+    /// ambiguity-label probe, so the three presence answers cannot drift (the
+    /// `enabledOnly` filter must NOT be in this path, or a disabled control is
+    /// silently invisible to `assert` while `find` still reports it). Mirrors
+    /// `candidateMatches` (bounded, name-filtered) minus the actionable gate.
+    static func presenceMatches(named name: String, under root: Element) -> [(Element, ElementFacts)] {
+        root.searchElements(matching: name, options: presenceOptions())
+            .map { ($0, facts(of: $0)) }
+            .filter { NameMatch.matches($0.1, query: name) }
+    }
+
     enum Resolved {
         case element(Element, ElementFacts)
         case ambiguous([String])

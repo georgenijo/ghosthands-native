@@ -50,6 +50,8 @@ struct GhostHandsCLI {
             runExtract(Array(args.dropFirst()))
         case "find":
             runFind(Array(args.dropFirst()))
+        case "assert", "expect":
+            runAssert(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
         case "click-at":
@@ -783,6 +785,67 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - assert / expect
+
+    /// `assert <exists|absent|value|count> "<name>" <app> [<arg>]` — a
+    /// machine-checkable assertion for test harnesses. The EXIT CODE is the
+    /// contract: PASS → 0, FAIL → 1 (a real assertion that did NOT hold; the
+    /// actual-vs-expected is printed), usage/refuse → 2 (the assertion could not
+    /// be checked, e.g. a missing app — distinct from a FAIL, never a fake green).
+    @MainActor
+    static func runAssert(_ rest: [String]) {
+        guard let sub = rest.first else { usage() }
+        let tail = Array(rest.dropFirst())
+
+        // Build the assertion KIND from the sub-verb + its positionals. The app
+        // spec is always the positional right after the name (mirroring the other
+        // verbs); the value/count assertions take one more positional argument.
+        let kind: AssertVerdict.Kind
+        let name: String
+        let appSpec: String
+        switch sub {
+        case "exists":
+            guard tail.count >= 2 else { usage() }
+            kind = .exists; name = tail[0]; appSpec = tail[1]
+        case "absent", "missing":
+            guard tail.count >= 2 else { usage() }
+            kind = .absent; name = tail[0]; appSpec = tail[1]
+        case "value":
+            guard tail.count >= 3 else { usage() }
+            kind = .valueEquals(tail[2]); name = tail[0]; appSpec = tail[1]
+        case "count":
+            guard tail.count >= 3 else { usage() }
+            // A non-numeric count is a USAGE error (exit 2) — refuse to run a
+            // malformed assertion rather than coerce a garbage count.
+            guard let n = Int(tail[2]), n >= 0 else {
+                let msg = "assert failed: \(tail[2].debugDescription) is not a valid "
+                    + "count (expected a non-negative integer)\n"
+                FileHandle.standardError.write(Data(msg.utf8))
+                exit(2)
+            }
+            kind = .countEquals(n); name = tail[0]; appSpec = tail[1]
+        default:
+            usage()
+        }
+
+        do {
+            let outcome = try GhostHands.assert(kind, name: name, appSpec: appSpec)
+            // The verdict message goes to stdout (the harness reads it); the exit
+            // code is the machine signal. PASS → 0, FAIL → 1.
+            print("\(outcome.message) in \(outcome.app)")
+            exit(outcome.passed ? 0 : 1)
+        } catch let error as GhostHandsError {
+            // A REFUSE: the app/element could not be read, or a value assertion was
+            // ambiguous — the assertion could not be CHECKED. Exit 2 (distinct from
+            // a FAIL), never a fake green.
+            FileHandle.standardError.write(Data("assert failed: \(error)\n".utf8))
+            exit(2)
+        } catch {
+            FileHandle.standardError.write(Data("assert failed: unexpected error\n".utf8))
+            exit(2)
+        }
+    }
+
     // MARK: - shot
 
     @MainActor
@@ -1315,6 +1378,11 @@ struct GhostHandsCLI {
           ghosthands window resize <w> <h> <app> [--window <id|title>]  set size (invisible AX set), verified by read-back
           ghosthands window raise <app> [--window <id|title>]          AXRaise (stacking only) — dispatched-unverified
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
+          ghosthands assert exists "<name>" <app>      PASS(0) if the named control resolves, FAIL(1) if absent
+          ghosthands assert absent "<name>" <app>      PASS(0) if NO control of that name resolves, FAIL(1) if present
+          ghosthands assert value "<name>" <app> "<v>" PASS(0) if the control's read-back value == v, FAIL(1) (reports actual)
+          ghosthands assert count "<name>" <app> <n>   PASS(0) if exactly n controls match, FAIL(1) (reports actual count)
+          (assert == expect; PASS exit 0, FAIL exit 1, usage/refuse exit 2 — a machine-checkable assertion)
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
@@ -1354,6 +1422,10 @@ struct GhostHandsCLI {
           ghosthands window resize 800 600 Notes --window "Untitled"
           ghosthands window raise Preview --window 12345
           ghosthands find "7" Calculator
+          ghosthands assert exists "Save" TextEdit
+          ghosthands assert absent "Error" TextEdit
+          ghosthands assert value "Display" Calculator "0"
+          ghosthands assert count "7" Calculator 1
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
@@ -1453,6 +1525,22 @@ struct GhostHandsCLI {
             exposes — a cell with no readable value is BLANK, never guessed — and a
             present-but-EMPTY table (0 AXRow children) is honest EMPTY output (0 rows),
             distinct from a MISSING table (a refuse). It is a pure read: no press, no
+            focus steal.
+          - assert/expect are the UI-TESTING core — a machine-checkable assertion whose
+            EXIT CODE is the contract: PASS exit 0, FAIL exit 1, usage/refuse exit 2.
+            HONESTY: PASS is emitted ONLY on the OBSERVED condition (there is no default
+            green); a FAIL prints the ACTUAL alongside the EXPECTED (a real assertion, not
+            a bare "failed"). The FAIL-vs-REFUSE split is the honesty boundary — a FAIL is
+            an assertion that was CHECKED and did not hold (exit 1); a REFUSE (exit 2) is an
+            assertion that could NOT be checked (the app is not running, AX is not granted,
+            or a `value` assertion's name resolves to >1 distinct control — comparing the
+            value of an arbitrary one is the wrong-target coin-flip click refuses on). It
+            reads through the SAME bounded, cycle-safe Finder as the other verbs (never a
+            raw searchElements) over the PRESENCE gate (static labels + disabled controls
+            count — an assertion is about what is ON SCREEN, not only what is clickable),
+            deduping the duplicate-render quirk so count is the number of DISTINCT controls.
+            `value` compares the read-back value as a literal exact string (an empty / unset
+            value normalises to "empty"); `count` is exact arity. A pure read: no press, no
             focus steal.
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
