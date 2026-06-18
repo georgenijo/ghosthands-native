@@ -130,8 +130,16 @@ ref (resolving it to a `data-gh-ref` attribute selector) AND raw CSS (additive);
 ref whose stamped element is gone after a nav/re-render REFUSES (`staleRef`,
 "re-read"). Live-verified on example.com→iana (click-by-ref VERIFIED via
 navigation) and html.duckduckgo.com (fill-by-ref VERIFIED via read-back). The
-see-the-words find backup is the scheduled tail item (after #11). Remaining:
-#9 → #10 → #8 → #11.
+see-the-words find backup is the scheduled tail item (after #11).
+
+**#9 ✅ shipped** — `web open [--headed] <url> [browser]` launches an ISOLATED
+throwaway instance (OS-chosen port, fresh temp profile), waits until a driveable
+page is listed, and persists a session handle; subsequent `web read/click/fill`
+auto-target it (no `--debug-port`, browser arg optional). `web close` terminates
+it (plain SIGTERM) and removes the temp profile — zero leftovers. Live-verified
+end-to-end with George's real Brave running concurrently: the real default
+profile was NEVER touched (the throwaway ran on its own temp profile, and close
+killed only the throwaway pid). Remaining: #10 → #8 → #11.
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the

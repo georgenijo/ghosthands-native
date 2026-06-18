@@ -139,6 +139,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// act on a moved element (the ref-addressing honesty boundary: a stale handle
     /// never silently retargets), telling the caller to re-read for fresh refs.
     case staleRef(ref: String)
+    /// `web open` was called while a LIVE managed session already exists — we
+    /// REFUSE rather than spawn a second throwaway and orphan the first. The caller
+    /// should `web close` it (or pass an explicit `--debug-port` to drive it).
+    case sessionAlreadyOpen(port: Int, pid: Int32)
+    /// `web close` was called with no managed session recorded — nothing to tear
+    /// down (the honest refuse: we don't fabricate a teardown that did nothing).
+    case noSession
     /// A `right-click` fell to the PIXEL route (the element advertises no
     /// AXShowMenu) but the element exposes NO readable AX frame to aim at. We
     /// REFUSE rather than right-click a guessed point — a blind poke has no
@@ -287,6 +294,12 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "\(ref) is a stale ref — the page navigated or re-rendered since "
                 + "the last `web read` (the stamped element is gone); re-read to get "
                 + "fresh refs, then address by the new @eN"
+        case let .sessionAlreadyOpen(port, pid):
+            return "a managed web session is already open (pid \(pid), port \(port)) "
+                + "— `web close` it first, or drive it with --debug-port \(port)"
+        case .noSession:
+            return "no managed web session is open — nothing to close (open one with "
+                + "`web open <url>`)"
         case let .noElementFrame(name):
             return "\(name.debugDescription) advertises no AXShowMenu and exposes "
                 + "no readable frame — refusing to right-click a guessed point "

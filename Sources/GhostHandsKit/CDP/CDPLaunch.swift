@@ -196,12 +196,23 @@ public enum CDPLauncher {
     /// on (the agent-browser rule: only drop it under root/container detection,
     /// which we never do here).
     public static func launchArguments(profileDir: String) -> [String] {
-        [
+        launchArguments(profileDir: profileDir, url: nil)
+    }
+
+    /// The launch arguments WITH an optional initial URL (issue #9's `web open
+    /// <url>`). The URL is appended as a POSITIONAL arg — Chromium opens it as the
+    /// first tab — so the managed session lands on the page directly. Same security
+    /// posture as the no-URL form (ephemeral port, isolated temp profile, sandbox
+    /// left ON). A nil/empty URL omits the positional (a blank new-tab instance).
+    public static func launchArguments(profileDir: String, url: String?) -> [String] {
+        var args = [
             "--remote-debugging-port=0",
             "--user-data-dir=\(profileDir)",
             "--no-first-run",
             "--no-default-browser-check",
         ]
+        if let url, !url.isEmpty { args.append(url) }
+        return args
     }
 
     /// Launch `binaryPath` as an isolated automation instance and return the
@@ -213,11 +224,11 @@ public enum CDPLauncher {
     ///
     /// SECURITY: the port is ALWAYS read from the sidecar Chromium writes into the
     /// isolated profile — never guessed, never defaulted to 9222.
-    static func launch(binaryPath: String) async throws -> CDPLaunchedInstance {
+    static func launch(binaryPath: String, url: String? = nil) async throws -> CDPLaunchedInstance {
         let profileURL = try makeIsolatedProfileDir()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = launchArguments(profileDir: profileURL.path)
+        process.arguments = launchArguments(profileDir: profileURL.path, url: url)
         // Silence the child's chatter; we read state from the sidecar, not stdio.
         process.standardOutput = Pipe()
         process.standardError = Pipe()

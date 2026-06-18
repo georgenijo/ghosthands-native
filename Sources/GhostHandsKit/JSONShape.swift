@@ -294,6 +294,23 @@ extension JSONResult {
                      ("entries", entries)])
     }
 
+    public static func fromWebOpen(_ info: WebSessionInfo) -> JSONResult {
+        JSONResult(
+            verb: "web open", status: .ok, app: info.browser, target: info.url,
+            fields: [("port", .int(info.port)),
+                     ("pid", .int(Int(info.pid))),
+                     ("profileDir", .string(info.profileDir)),
+                     ("binaryPath", .string(info.binaryPath))])
+    }
+
+    public static func fromWebClose(_ info: WebSessionInfo) -> JSONResult {
+        JSONResult(
+            verb: "web close", status: .ok, app: info.browser, target: info.url,
+            fields: [("port", .int(info.port)),
+                     ("pid", .int(Int(info.pid))),
+                     ("profileDir", .string(info.profileDir))])
+    }
+
     public static func fromWebTabs(_ r: GhostHands.WebTabsResult,
                                    served: GhostHands.ServedLens) -> JSONResult {
         let tabs = GHJSONValue.array(r.tabs.map { t in

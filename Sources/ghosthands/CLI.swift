@@ -377,6 +377,8 @@ struct GhostHandsCLI {
         guard let sub = scanned.first else { usage() }
         let tail = Array(scanned.dropFirst())
         switch sub {
+        case "open": await runWebOpen(tail)
+        case "close": await runWebClose(tail)
         case "read": await runWebRead(tail)
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
@@ -398,10 +400,14 @@ struct GhostHandsCLI {
     /// UNCHANGED (refuse). When given, a closed port launches a NEW, ISOLATED
     /// throwaway browser instance for automation — never the user's real profile,
     /// never silently.
+    /// `port` is `nil` when `--debug-port` was NOT given — the leaf runner then
+    /// resolves the EFFECTIVE port (an explicit flag wins, else a managed session's
+    /// port, else 9222) via `WebSession.effectivePort`. So a managed session
+    /// auto-targets without changing the historical default.
     static func parseWebLens(_ args: [String])
-        -> (lens: WebLens, port: Int, relaunch: Bool, positional: [String]) {
+        -> (lens: WebLens, port: Int?, relaunch: Bool, positional: [String]) {
         var lens: WebLens = .auto
-        var port = 9222
+        var port: Int?
         var relaunch = false
         var positional: [String] = []
         var i = 0
@@ -419,10 +425,59 @@ struct GhostHandsCLI {
         return (lens, port, relaunch, positional)
     }
 
+    // MARK: - web open / web close (managed throwaway session)
+
+    @MainActor
+    static func runWebOpen(_ rest: [String]) async {
+        // web open [--headed] <url> [browser]
+        var headed = false
+        var positional: [String] = []
+        let args = scanJSON(rest)
+        var i = 0
+        while i < args.count {
+            if args[i] == "--headed" { headed = true; i += 1 }
+            else { positional.append(args[i]); i += 1 }
+        }
+        guard let url = positional.first else { usage() }
+        let browser = positional.count >= 2 ? positional[1] : nil
+        do {
+            let info = try await GhostHands.webOpen(url: url, browser: browser, headed: headed)
+            if jsonMode { JSONResult.fromWebOpen(info).emit(); return }
+            print("opened \(info.browser) session — port \(info.port), pid \(info.pid)"
+                + ", url \(info.url.debugDescription)")
+            let note = "— session ready; `web read`/`web click @eN`/`web fill` now "
+                + "auto-target it (no --debug-port). `web close` to tear down. "
+                + "(throwaway profile \(info.profileDir))\n"
+            FileHandle.standardError.write(Data(note.utf8))
+        } catch let error as GhostHandsError {
+            fail("web open", error)
+        } catch {
+            failUnexpected("web open")
+        }
+    }
+
+    @MainActor
+    static func runWebClose(_ rest: [String]) async {
+        _ = scanJSON(rest)
+        do {
+            let info = try GhostHands.webClose()
+            if jsonMode { JSONResult.fromWebClose(info).emit(); return }
+            print("closed \(info.browser) session — terminated pid \(info.pid), "
+                + "removed throwaway profile")
+        } catch let error as GhostHandsError {
+            fail("web close", error)
+        } catch {
+            failUnexpected("web close")
+        }
+    }
+
     @MainActor
     static func runWebRead(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        guard let browser = positional.first else { usage() }
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: positional.first, session: session) else { usage() }
         do {
             let (result, served) = try await GhostHands.webRead(
                 browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
@@ -453,8 +508,11 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebTabs(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        guard let browser = positional.first else { usage() }
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: positional.first, session: session) else { usage() }
         do {
             let (result, served) = try await GhostHands.webTabs(
                 browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
@@ -487,11 +545,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebClick(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web click <selector> <browser>
-        guard positional.count >= 2 else { usage() }
-        let selector = positional[0]
-        let browser = positional[1]
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web click <selector> [browser]   (browser optional with a managed session)
+        guard let selector = positional.first else { usage() }
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
         do {
             let result = try await GhostHands.webClick(
                 selector: selector, browser: browser, lens: lens, debugPort: port,
@@ -507,12 +568,16 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebFill(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web fill <selector> <text> <browser>
-        guard positional.count >= 3 else { usage() }
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web fill <selector> <text> [browser]   (browser optional with a session)
+        guard positional.count >= 2 else { usage() }
         let selector = positional[0]
         let text = positional[1]
-        let browser = positional[2]
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
         do {
             let result = try await GhostHands.webFill(
                 selector: selector, text: text, browser: browser, lens: lens,
@@ -555,11 +620,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebHtml(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web html <selector> <browser>
-        guard positional.count >= 2 else { usage() }
-        let selector = positional[0]
-        let browser = positional[1]
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web html <selector> [browser]   (browser optional with a managed session)
+        guard let selector = positional.first else { usage() }
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
         do {
             let result = try await GhostHands.webHtml(
                 selector: selector, browser: browser, lens: lens, debugPort: port,
@@ -581,11 +649,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebEval(_ rest: [String]) async {
-        let (lens, port, relaunch, positional) = parseWebLens(scanJSON(rest))
-        // web eval <js> <browser>
-        guard positional.count >= 2 else { usage() }
-        let js = positional[0]
-        let browser = positional[1]
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web eval <js> [browser]   (browser optional with a managed session)
+        guard let js = positional.first else { usage() }
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
         do {
             let result = try await GhostHands.webEval(
                 js: js, browser: browser, lens: lens, debugPort: port,
@@ -1746,7 +1817,9 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
-          ghosthands web read <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   page digest; CDP read stamps @eN on each interactive element (auto: CDP when a debug port is open, else AX)
+          ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)
+          ghosthands web close                                                       terminate the managed session + remove its throwaway profile
+          ghosthands web read [browser] [--cdp|--ax] [--debug-port N] [--relaunch]   page digest; CDP read stamps @eN on each interactive element (auto: CDP when a debug port is open, else AX; browser optional with a managed session)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N] [--relaunch]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands web click "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]        click an element by @eN ref (from web read) or CSS selector (CDP-only), verified by navigation
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
@@ -1813,6 +1886,10 @@ struct GhostHandsCLI {
           ghosthands snapshot Calculator --json
           ghosthands extract "System Information"
           ghosthands extract Mail --in "Messages"
+          ghosthands web open --headed "https://example.com/"   # then drive with no --debug-port:
+          ghosthands web read                        # auto-targets the open session
+          ghosthands web click "@e1"                 # …and @eN refs from that read
+          ghosthands web close                       # tear it down (kills proc, removes temp profile)
           ghosthands web read Brave
           ghosthands web tabs Chrome
           ghosthands web click "@e5" Brave          # by ref from `web read` (no selector hand-authoring)
