@@ -120,6 +120,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// selector has no AX equivalent — these selector verbs REQUIRE CDP. A
     /// usage-class refuse, surfaced before any work.
     case selectorNeedsCDP
+    /// A `right-click` fell to the PIXEL route (the element advertises no
+    /// AXShowMenu) but the element exposes NO readable AX frame to aim at. We
+    /// REFUSE rather than right-click a guessed point — a blind poke has no
+    /// element geometry to vouch for it.
+    case noElementFrame(name: String)
 
     public var description: String {
         switch self {
@@ -230,6 +235,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case .selectorNeedsCDP:
             return "a CSS selector has no AX equivalent — `web click`/`web fill` "
                 + "REQUIRE CDP; drop --ax (default is --cdp, port 9222)"
+        case let .noElementFrame(name):
+            return "\(name.debugDescription) advertises no AXShowMenu and exposes "
+                + "no readable frame — refusing to right-click a guessed point "
+                + "(no element geometry to aim at)"
         }
     }
 }
