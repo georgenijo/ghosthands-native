@@ -49,7 +49,13 @@ Map→Implement→Review→Fix workflow; both reviewed PASS for honesty before m
   the target window's repaint — it can only ever **under**-claim, never fake a
   VERIFIED. The runtime HID path is not exercised in the hermetic suite (rails
   forbid posting real HID events in tests); only the pure logic (flag parse, mode
-  selection, drag interpolation, verdict mapping) is unit-tested.
+  selection, drag interpolation, verdict mapping) is unit-tested. *Live-verified*
+  on a foregrounded TextEdit: a `--visible` drag across two text lines selected
+  them and honestly reported **verified** (39.1% of the region changed); an
+  immediate identical re-drag found the text already selected, produced no new
+  pixel change, and honestly reported **dispatched-unverified** — the same
+  command, no false success when the world didn't move; and the cursor was saved
+  and restored to its exact prior point (1133,930 → 1133,930).
 
 **Tests:** 225 hermetic total (+14: 5 web wake, 9 pixel). Both tiers passed an
 adversarial honesty review inside their workflow; merged on `main` (build + 225
