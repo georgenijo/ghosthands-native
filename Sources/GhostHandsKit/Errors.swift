@@ -107,6 +107,15 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// malformed `/json/list` body, a never-arriving reply that hit its deadline,
     /// a CDP error reply, or a refused non-loopback `webSocketDebuggerUrl`.
     case cdpTransport(reason: String)
+    /// A consent-gated `--relaunch` could not spawn the isolated automation
+    /// instance — the throwaway profile dir could not be created, or the browser
+    /// binary failed to launch. REFUSE — nothing debuggable came up.
+    case relaunchFailed(reason: String)
+    /// The relaunched browser's `DevToolsActivePort` sidecar could not be read — it
+    /// never appeared within the deadline, or its content was malformed. We REFUSE
+    /// rather than guess a port (the security rule: never connect to a fabricated
+    /// debug port).
+    case devToolsPortUnreadable(reason: String)
     /// A `web click` / `web fill` CSS selector matched NO element in the page DOM.
     /// We REFUSE rather than actuate an arbitrary or fabricated target — a missing
     /// selector is a wrong-target signal, never a silent no-op.
@@ -230,6 +239,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "refusing to enable a debug surface silently"
         case let .cdpTransport(reason):
             return "CDP transport error: \(reason)"
+        case let .relaunchFailed(reason):
+            return "could not relaunch an isolated browser for automation: \(reason)"
+        case let .devToolsPortUnreadable(reason):
+            return "could not read the relaunched browser's debug port: \(reason) "
+                + "— refusing to guess a port"
         case let .selectorNotFound(selector, app):
             return "no element matching selector \(selector.debugDescription) in "
                 + "\(app)'s page — refusing to actuate a target that is not in the DOM"
