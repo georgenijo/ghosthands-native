@@ -152,6 +152,11 @@ extension GhostHands {
             return true
         case .none:
             return false
+        case .indexOutOfRange:
+            // `wait` passes no --nth locator, so this is unreachable; treat a
+            // would-be out-of-range as "not present" (an existence wait keeps
+            // polling, a --gone wait sees it as gone) rather than crash.
+            return false
         }
     }
 }

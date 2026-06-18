@@ -388,6 +388,11 @@ extension GhostHands {
             throw GhostHandsError.ambiguousMatch(name: button, candidates: candidates)
         case .none:
             throw GhostHandsError.elementNotFound(name: button, app: target.name)
+        case let .indexOutOfRange(requested, count):
+            // `dialog --click` passes no --nth locator, so this is unreachable;
+            // surface it honestly rather than crash if it ever arises.
+            throw GhostHandsError.locatorIndexOutOfRange(
+                name: button, requested: requested, count: count)
         }
         let role = facts.role ?? "AXUnknown"
 
