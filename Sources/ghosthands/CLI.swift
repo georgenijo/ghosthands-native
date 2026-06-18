@@ -30,6 +30,8 @@ struct GhostHandsCLI {
             runSetValue(Array(args.dropFirst()))
         case "doubleclick":
             runDoubleClick(Array(args.dropFirst()))
+        case "right-click", "rightclick":
+            runRightClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
         case "navigate":
@@ -158,6 +160,53 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("doubleclick")
         }
+    }
+
+    // MARK: - right-click
+
+    @MainActor
+    static func runRightClick(_ rest: [String]) {
+        // `--visible` may appear in any order (REUSE PixelFlags — only the pixel
+        // fallback honours it; the AX route is always invisible); the rest are
+        // positional: <name> <app>.
+        let (mode, pos) = PixelFlags.parse(rest)
+        guard pos.count >= 2 else { usage() }
+        let name = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try GhostHands.rightClick(name: name, appSpec: appSpec, mode: mode)
+            print(reportRightClick(outcome))
+        } catch let error as GhostHandsError {
+            fail("right-click", error)
+        } catch {
+            failUnexpected("right-click")
+        }
+    }
+
+    /// Honest one-liner for a right-click. VERIFIED quotes the observed
+    /// context-menu appearance (the before → after AXMenu count); otherwise the
+    /// action is dispatched-unverified (the menu was not observed — exit 0, never
+    /// a success claim). The ROUTE is named (AXShowMenu vs pixel) so the weaker
+    /// pixel-route guarantees are explicit, and the `.visible` HID exception is
+    /// LABELLED so a moved cursor / focus steal is never silent.
+    static func reportRightClick(_ o: RightClickOutcome) -> String {
+        let where_ = "(role=\(o.role)) in \(o.app)"
+        let via: String
+        switch o.route {
+        case .axShowMenu:
+            via = " [via AXShowMenu — invisible]"
+        case .pixel:
+            via = o.mode == .visible
+                ? " [via pixel right-click — visible HID; cursor moved, may steal focus]"
+                : " [via pixel right-click — invisible CGEventPostToPid; postToPid is "
+                    + "coordinate-only, a background/non-key surface may ignore it]"
+        }
+        if o.verified {
+            return "right-clicked \(o.name.debugDescription) \(where_)\(via) — "
+                + "verified: \(o.evidence ?? "context menu appeared")"
+        }
+        return "right-clicked \(o.name.debugDescription) \(where_)\(via) — action "
+            + "dispatched; no context menu observed (effect unverified)"
     }
 
     // MARK: - act
@@ -848,6 +897,7 @@ struct GhostHandsCLI {
           ghosthands type "<text>" "<field>" <app>    set a text field's value, then read it back
           ghosthands set-value "<v>" "<ctl>" <app>    set a checkbox/slider/popup, then read it back
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
+          ghosthands right-click "<name>" <app> [--visible]   open an element's context menu (AXShowMenu, else pixel right-click), verified by menu-appeared
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
@@ -874,6 +924,7 @@ struct GhostHandsCLI {
           ghosthands type "hello" "Search" Safari
           ghosthands set-value "on" "Wi-Fi" "System Settings"
           ghosthands doubleclick "report.pdf" Finder
+          ghosthands right-click "report.pdf" Finder
           ghosthands act increment "Volume" "System Settings"
           ghosthands snapshot Calculator --json
           ghosthands web read Brave
@@ -906,6 +957,17 @@ struct GhostHandsCLI {
             back, so a set cannot be verified.
           - act/doubleclick verify by read-back where observable; actions with no in-AX
             observable (e.g. raise, show-menu) land as dispatched-unverified, never faked.
+          - right-click opens an element's CONTEXT MENU, in honesty order: it RESOLVES the
+            named element (same refuse-on-not-found / refuse-on-ambiguous rules as click);
+            prefers the AX route (if the element advertises AXShowMenu, performs it —
+            invisible, cursor-less); else falls back to a REAL right-click (CGEvent
+            rightMouseDown + rightMouseUp) at the element CENTER (invisible CGEventPostToPid
+            by default, or --visible HID — which moves the cursor and may steal focus). It
+            WITNESSES by counting context AXMenu elements in the app's AX tree before vs
+            after: a NEW menu appeared → VERIFIED (works for BOTH routes, incl. the pixel
+            one); the action landed but no menu was observed → dispatched-unverified, NEVER a
+            faked success. It REFUSES a pixel-route element with no readable AX frame (no
+            point to aim at) rather than poke a guessed location.
           - navigate loads <url> via `open -a <browser> <url>` (no cursor, no focus games
             beyond what the load surfaces), settles, then RE-READS the FOCUSED window's
             page AXWebArea URL/title (the window `open` raised the load into — NOT the
