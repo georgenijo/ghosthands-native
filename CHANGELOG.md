@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.7.0-m4 — 2026-06-18
+
+Browser-task completeness — the three verbs that close the gaps a live
+Wikipedia-search demo exposed: **go anywhere**, **press keys**, **know where
+things are**. Built in parallel (isolated worktrees), each honesty-reviewed PASS.
+
+**Added**
+- **`navigate <url> [browser]`** — load a URL in a browser and prove the page
+  changed. Actuates via `open -a` (the `Install` `Process` idiom), then wakes +
+  reads the browser's `AXWebArea` document URL/title back: **verified** only when
+  the landed host (and path when requested) matches the request; **dispatched-
+  unverified** when the load issued but can't be confirmed (AXWebArea absent /
+  still loading / redirect); **refuse** on a malformed URL or unresolved browser.
+  `open`'s exit status is *structurally excluded* from the verdict — only the
+  read-back proves it. Default browser = first running Chromium (auto-pick
+  reported). v1 uses `open`; the omnibox-driven version (type URL + `key` Enter)
+  is a future upgrade now that `key` exists.
+- **`key <spec> [app] [--visible]`** — send a keystroke or chord: `return`/`enter`,
+  `tab`, `escape`, `space`, arrows, letters, digits, with `cmd`/`shift`/`alt`/`ctrl`
+  modifiers (`cmd+s`). Invisible-first: default posts a key-down/up `CGEvent` pair
+  via `CGEventPostToPid` (cursor-less, background best-effort); `--visible` focuses
+  the app + posts via the HID tap (the labelled exception, mirrors pixel
+  `--visible` — moves focus, not invisible). A keystroke has **no built-in
+  observable**, so the verdict is **always dispatched-unverified**, never faked; an
+  unknown key / bad spec **refuses** before any post. The name→keycode + modifier→
+  flags tables + chord parse are pure and hermetically tested.
+- **`web read` now emits each interactive control's on-screen frame** `@(x,y w×h)`,
+  read from AX (`Element.frame()` = `AXPosition` + `AXSize`) — so a web control can
+  be pixel-targeted *exactly* instead of eyeballed off a screenshot. A control
+  whose frame AX can't read is marked `frame:?`, **never a fabricated box**; static
+  text omits coordinates (not a pixel target). `ElementFacts` gained an optional
+  `frame` captured in `Finder.facts(of:)` (snapshot text unchanged).
+
+**Live-verified end-to-end on a backgrounded Brave — the full task, ghosthands-only:**
+`navigate` → `verified: landed https://en.wikipedia.org/...`; `web read` →
+`AXTextField "Search Wikipedia" @(3360,161 405×32)`, `AXButton "Search"
+@(3763,161 72×32)` (exact frames); `type "Barack Obama"` → verified `"" → "Barack
+Obama"`; a `pixel --visible` click on the field's exact frame focused it; `key
+--visible return` submitted; a final `web read` landed on `AXHeading "Barack
+Obama"`. **Honest finding (recorded, not hidden):** an AX-typed field is not
+*focused*, so a bare invisible `key return` does not submit — it honestly reported
+`dispatched; effect unverified`, and the page did not change, until a focus-click
+preceded it. A `focus` helper / auto-focus-on-type is the next small refinement.
+
+**Tests:** 325 hermetic total (+45: 18 navigate, 21 key, 6 web-frames). Each tier
+passed an adversarial honesty review; merged on `main` (build + 325 green, additive
+`Errors.swift`/`CLI.swift` changes auto-merged clean) and live-verified before push.
+
+**Built on** AXorcist (MIT). See ATTRIBUTION.md.
+
 ## 0.6.0-m4 — 2026-06-18
 
 M4 hard surfaces, continued: window identity + management, multi-monitor aware,

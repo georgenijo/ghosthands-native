@@ -71,8 +71,10 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | M4 |
 | Install app (DMG → Applications, cp -R + verify bundle) | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Multi-monitor + window identity/management | ❌ | ✅ | ✅ | ✅ | done (M4) |
-| Web tier (read page) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |
+| Web tier (read page, with element frames) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |
 | Web tier (tabs / bookmarks) | ✅(cua) | ✅ | ~(no AXTabGroup) | ✅ | M4 (CDP = future) |
+| Navigate to a URL (verify page changed) | ✅(cua) | ✅ | ✅ | ✅ | done (M4) |
+| Press keys / hotkeys (Enter / Tab / chords) | ✅(cua) | ✅ | ✅(dispatched) | ✅ | done (M4) |
 | Always-on daemon + push-events (react instantly) | ❌ | ❌ | ❌ | ✅ | M5 |
 | **Pluggable interface (MCP server) — any agent can drive it** | ❌ | ✅ | ✅ | ✅ | **done (M5 scaffold)** |
 
