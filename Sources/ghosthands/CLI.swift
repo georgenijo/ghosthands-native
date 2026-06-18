@@ -43,6 +43,8 @@ struct GhostHandsCLI {
             await runClickAt(Array(args.dropFirst()))
         case "drag":
             await runDrag(Array(args.dropFirst()))
+        case "install":
+            await runInstall(Array(args.dropFirst()))
         case "replay":
             runReplay(Array(args.dropFirst()))
         case "record":
@@ -390,6 +392,58 @@ struct GhostHandsCLI {
         fail(verb, .badCoordinate(raw))
     }
 
+    // MARK: - install
+
+    @MainActor
+    static func runInstall(_ rest: [String]) async {
+        // Accept flags in any order (like snapshot/PixelFlags): --force (bool),
+        // --dest <dir> (consumes the next token), first leftover positional = dmg.
+        var dmgPath: String?
+        var dest: String?
+        var force = false
+        var i = 0
+        while i < rest.count {
+            let arg = rest[i]
+            switch arg {
+            case "--force":
+                force = true
+            case "--dest":
+                // consume the next token as the destination directory
+                if i + 1 < rest.count {
+                    dest = rest[i + 1]
+                    i += 1
+                }
+            default:
+                if dmgPath == nil { dmgPath = arg }
+            }
+            i += 1
+        }
+        guard let dmgPath else { usage() }
+        do {
+            let outcome = try await GhostHands.install(dmgPath: dmgPath, dest: dest, force: force)
+            print(reportInstall(outcome))
+        } catch let error as GhostHandsError {
+            fail("install", error)
+        } catch {
+            failUnexpected("install")
+        }
+    }
+
+    /// Honest one-liner for an install. VERIFIED names the bundle, the dest, and
+    /// quotes the proven CFBundleIdentifier as evidence; DISPATCHED-UNVERIFIED
+    /// states plainly that `cp` returned 0 but the bundle could not be confirmed
+    /// (the word "unverified" is present) — exits 0, NEVER a success/installed
+    /// claim on a copy that wasn't verified.
+    static func reportInstall(_ o: GhostHands.InstallOutcome) -> String {
+        if o.verified {
+            let id = o.bundleIdentifier ?? "?"
+            return "installed \(o.appName.debugDescription) to \(o.dest) — "
+                + "verified: CFBundleIdentifier \(id) present"
+        }
+        return "copied \(o.appName.debugDescription) to \(o.dest) — cp returned 0; "
+            + "could not confirm bundle (effect unverified)"
+    }
+
     // MARK: - replay
 
     @MainActor
@@ -515,6 +569,7 @@ struct GhostHandsCLI {
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
+          ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
           ghosthands version
@@ -534,6 +589,8 @@ struct GhostHandsCLI {
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
+          ghosthands install ~/Downloads/Foo.dmg
+          ghosthands install ~/Downloads/Foo.dmg --dest ~/Applications --force
           ghosthands record /tmp/login.json type "alice" "Username" Safari
           ghosthands replay /tmp/login.json
 
@@ -575,6 +632,16 @@ struct GhostHandsCLI {
                 HID landed on it (this only ever under-claims, never a false verified).
             Pixel mode is MORE visible / less guaranteed than the AX verbs — prefer
             click/act when an AX element exists.
+          - install mounts the DMG (hdiutil), finds the SINGLE top-level .app, and
+            copies it with cp -R (no GUI drag — no cursor, no focus steal), then
+            ALWAYS detaches the mount. It REFUSES (nothing copied) on a missing DMG,
+            a mount failure, zero or >1 .app in the DMG, or a destination that
+            already holds <App>.app without --force (it will not clobber an
+            installed app). It reports VERIFIED only when the installed bundle is
+            present AND its Contents/Info.plist parses with a CFBundleIdentifier;
+            a cp that returns 0 but cannot be confirmed is dispatched-unverified,
+            NEVER "installed". It does NOT verify Gatekeeper/quarantine/notarization,
+            code-signature validity, or first-launch TCC — presence + Info.plist only.
         """
         FileHandle.standardError.write(Data((text + "\n").utf8))
         exit(2)
