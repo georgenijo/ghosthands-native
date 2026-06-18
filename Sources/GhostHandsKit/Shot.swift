@@ -48,6 +48,57 @@ public enum Shot {
         CGImageDestinationAddImage(dest, image, nil)
         return CGImageDestinationFinalize(dest)
     }
+
+    /// Best-effort FULL-SCREEN (main display) capture for the failure-artifacts
+    /// side-channel, reusing the same ScreenCaptureKit + `writePNG` machinery as
+    /// the `shot` verb. Unlike `shot`, this NEVER throws and NEVER refuses: it is
+    /// pure forensics. It returns the written path on success and `nil` on ANY
+    /// shortfall (no Screen-Recording grant, no display, capture error, an empty
+    /// image, or an encode failure) so the caller logs `screenshotPath: null`
+    /// rather than failing. It captures the whole main display (not a window) so
+    /// the artifact shows the screen state at the moment of the refuse regardless
+    /// of which app — if any — the verb was targeting.
+    ///
+    /// NOT `@MainActor`: SCK's capture entry points are queue-backed and safe off
+    /// the main thread. The ONLY main-thread requirement is the one-time CGS
+    /// (WindowServer) connection bootstrap (`NSApplication.shared`), which the
+    /// caller performs on the main thread BEFORE invoking this from a background
+    /// task — so this can run while the main thread is blocked awaiting it
+    /// without a main-actor deadlock.
+    static func captureMainDisplayPNG(to url: URL) async -> String? {
+        // Permission gate (non-prompting) — without it the OS returns a black
+        // image; a refused grant means no artifact screenshot, never a black PNG.
+        guard CGPreflightScreenCaptureAccess() else { return nil }
+
+        let content: SCShareableContent
+        do {
+            content = try await SCShareableContent.current
+        } catch {
+            return nil
+        }
+        // The main display = the one carrying the menu bar (CGMainDisplayID).
+        let mainID = CGMainDisplayID()
+        guard let display = content.displays.first(where: { $0.displayID == mainID })
+            ?? content.displays.first else {
+            return nil
+        }
+
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let config = SCStreamConfiguration()
+        config.width = display.width
+        config.height = display.height
+        config.showsCursor = true   // forensic: show where the pointer was
+
+        let image: CGImage
+        do {
+            image = try await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: config)
+        } catch {
+            return nil
+        }
+        guard writePNG(image, to: url) else { return nil }
+        return url.path
+    }
 }
 
 extension GhostHands {

@@ -283,8 +283,7 @@ struct GhostHandsCLI {
             // An unknown friendly action is a USAGE error (exit 2), distinct from
             // a control that rejects a known action (exit 1).
             if case .unknownAction = error {
-                FileHandle.standardError.write(Data("act failed: \(error)\n".utf8))
-                exit(2)
+                refuse("act", message: "\(error)", code: 2)
             }
             fail("act", error)
         } catch {
@@ -504,8 +503,7 @@ struct GhostHandsCLI {
     /// runAct's `.unknownAction` wiring).
     static func failWebActuate(_ verb: String, _ error: GhostHandsError) -> Never {
         if case .selectorNeedsCDP = error {
-            FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
-            exit(2)
+            refuse(verb, message: "\(error)", code: 2)
         }
         fail(verb, error)
     }
@@ -824,9 +822,10 @@ struct GhostHandsCLI {
                 print(line)
                 // exit 0 (default)
             } else {
-                FileHandle.standardError.write(
-                    Data("not found: \(query.debugDescription) in \(outcome.app)\n".utf8))
-                exit(1)
+                // Preserve the exact original stderr wording (no "find failed:"
+                // prefix) — pass the full line verbatim, still record an artifact.
+                let msg = "not found: \(query.debugDescription) in \(outcome.app)"
+                refuseLine(verb: "find", message: msg, line: msg, code: 1)
             }
         } catch let error as GhostHandsError {
             fail("find", error)
@@ -917,9 +916,7 @@ struct GhostHandsCLI {
         let want = flag == "--timeout"
             ? "a finite number > 0"
             : "a finite number >= 0"
-        FileHandle.standardError.write(
-            Data("wait failed: \(flag) expects \(want), got \(v)\n".utf8))
-        exit(2)
+        refuse("wait", message: "\(flag) expects \(want), got \(v)", code: 2)
     }
 
     // MARK: - assert / expect
@@ -1165,8 +1162,7 @@ struct GhostHandsCLI {
             case let .badAmount(a):
                 msg = "invalid amount \(a.debugDescription) — expected a positive number (pages)"
             }
-            FileHandle.standardError.write(Data("scroll failed: \(msg)\n".utf8))
-            exit(2)
+            refuse("scroll", message: msg, code: 2)
         } catch {
             failUnexpected("scroll")
         }
@@ -1301,12 +1297,10 @@ struct GhostHandsCLI {
             // An unknown key name is a USAGE error (exit 2), mirroring runAct's
             // `.unknownAction` wiring; a bad spec is likewise a usage error.
             if case .unknownKey = error {
-                FileHandle.standardError.write(Data("key failed: \(error)\n".utf8))
-                exit(2)
+                refuse("key", message: "\(error)", code: 2)
             }
             if case .badKeySpec = error {
-                FileHandle.standardError.write(Data("key failed: \(error)\n".utf8))
-                exit(2)
+                refuse("key", message: "\(error)", code: 2)
             }
             fail("key", error)
         } catch {
@@ -1547,19 +1541,39 @@ struct GhostHandsCLI {
 
     // MARK: - failure helpers
 
+    /// The ONE place a refuse turns into a stderr line + a nonzero exit, and the
+    /// single hook for opt-in failure artifacts. `refuseLine` prints `line`
+    /// VERBATIM (callers pass the exact, already-formatted stderr text, so the
+    /// message wording is byte-for-byte unchanged), then — only when
+    /// GHOSTHANDS_ARTIFACTS names a dir — best-effort captures a screenshot +
+    /// appends a JSON log entry keyed by `verb`/`message`, and finally exits with
+    /// `code`. The artifact step runs AFTER the stderr line is already written and
+    /// is fully swallowed, so it can never change the message, the exit code, or
+    /// (when the env var is unset) anything at all.
+    static func refuseLine(verb: String, message: String, line: String, code: Int32) -> Never {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+        FailureArtifact.recordBlocking(
+            verb: verb, argv: CommandLine.arguments, errorMessage: message,
+            exitCode: code)
+        exit(code)
+    }
+
+    /// The common "<verb> failed: <message>" refuse (the format every `fail*`
+    /// and most usage-class exits already used).
+    static func refuse(_ verb: String, message: String, code: Int32) -> Never {
+        refuseLine(verb: verb, message: message, line: "\(verb) failed: \(message)", code: code)
+    }
+
     static func fail(_ verb: String, _ error: GhostHandsError) -> Never {
-        FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
-        exit(1)
+        refuse(verb, message: "\(error)", code: 1)
     }
 
     static func fail(_ verb: String, _ error: FlowCodec.FlowError) -> Never {
-        FileHandle.standardError.write(Data("\(verb) failed: \(error)\n".utf8))
-        exit(1)
+        refuse(verb, message: "\(error)", code: 1)
     }
 
     static func failUnexpected(_ verb: String) -> Never {
-        FileHandle.standardError.write(Data("\(verb) failed: unexpected error\n".utf8))
-        exit(1)
+        refuse(verb, message: "unexpected error", code: 1)
     }
 
     static func usage() -> Never {
@@ -1613,6 +1627,15 @@ struct GhostHandsCLI {
           ghosthands version
 
           <action> for `act` = open | confirm | pick | show-menu | cancel | raise | increment | decrement
+
+        ENV:
+          GHOSTHANDS_ARTIFACTS=<dir>   OFF by default. When set to a directory, EVERY verb that
+            REFUSES additionally (best-effort, side-channel only) appends a JSON line to
+            <dir>/ghosthands-failures.jsonl (timestamp, verb, full argv, error, exit code,
+            screenshot path) and captures a full-screen PNG to <dir>/<timestamp>-<verb>.png.
+            It NEVER changes a verb's output or exit code — a capture/log failure is swallowed
+            (screenshot logged as null). Needs Screen Recording for the PNG; the log is written
+            regardless. Unset/empty ⇒ no capture, no log, identical behavior.
 
         <app> = bundle id, pid, or (partial) app name. Examples:
           ghosthands click "New Folder" Finder
