@@ -32,6 +32,8 @@ struct GhostHandsCLI {
             runDoubleClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
+        case "focus":
+            runFocus(Array(args.dropFirst()))
         case "navigate":
             runNavigate(Array(args.dropFirst()))
         case "web":
@@ -195,6 +197,38 @@ struct GhostHandsCLI {
         }
         return "\(o.verbLabel) \(o.name.debugDescription) \(where_) — "
             + "\(o.action) accepted; no observable change (effect unverified)"
+    }
+
+    // MARK: - focus
+
+    @MainActor
+    static func runFocus(_ rest: [String]) {
+        guard rest.count >= 2 else { usage() }
+        let name = rest[0]
+        let appSpec = rest[1]
+        do {
+            let outcome = try GhostHands.focus(name: name, appSpec: appSpec)
+            print(reportFocus(outcome))
+        } catch let error as GhostHandsError {
+            fail("focus", error)
+        } catch {
+            failUnexpected("focus")
+        }
+    }
+
+    /// Honest one-liner for `focus`. VERIFIED quotes the AXFocused read-back;
+    /// DISPATCHED-UNVERIFIED states plainly that AX accepted the focus set but
+    /// AXFocused did not read back true (false, or unreadable on this control) —
+    /// exits 0, never a focus claim we cannot observe.
+    static func reportFocus(_ o: FocusOutcome) -> String {
+        let where_ = "(role=\(o.role)) in \(o.app)"
+        if o.verified {
+            return "focused \(o.name.debugDescription) \(where_) — "
+                + "verified: \(o.evidence ?? "AXFocused → true")"
+        }
+        let read = o.focusedAfter.map { $0 ? "true" : "false" } ?? "unreadable"
+        return "focus \(o.name.debugDescription) \(where_) — AXFocused set accepted; "
+            + "read back \(read) (effect unverified)"
     }
 
     // MARK: - web (read | tabs)
@@ -849,6 +883,7 @@ struct GhostHandsCLI {
           ghosthands set-value "<v>" "<ctl>" <app>    set a checkbox/slider/popup, then read it back
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
+          ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands web read <browser> [--cdp|--ax] [--debug-port N]   page digest (auto: CDP when a debug port is open, else AX)
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
@@ -875,6 +910,7 @@ struct GhostHandsCLI {
           ghosthands set-value "on" "Wi-Fi" "System Settings"
           ghosthands doubleclick "report.pdf" Finder
           ghosthands act increment "Volume" "System Settings"
+          ghosthands focus "Search" Safari
           ghosthands snapshot Calculator --json
           ghosthands web read Brave
           ghosthands web tabs Chrome
@@ -906,6 +942,12 @@ struct GhostHandsCLI {
             back, so a set cannot be verified.
           - act/doubleclick verify by read-back where observable; actions with no in-AX
             observable (e.g. raise, show-menu) land as dispatched-unverified, never faked.
+          - focus sets AXFocused = true on the named control then RE-READS AXFocused off a
+            fresh tree: VERIFIED only when it reads back true; an AX-accepted set whose
+            AXFocused reads back false — or whose AXFocused is unreadable/unsettable on that
+            control — is dispatched-unverified, NEVER a focus claim. type AUTO-FOCUSES the
+            field before writing (best-effort, so a later Enter lands), but type's verdict
+            still comes from the value read-back, never from focus.
           - navigate loads <url> via `open -a <browser> <url>` (no cursor, no focus games
             beyond what the load surfaces), settles, then RE-READS the FOCUSED window's
             page AXWebArea URL/title (the window `open` raised the load into — NOT the
