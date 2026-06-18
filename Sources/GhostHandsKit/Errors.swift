@@ -145,6 +145,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// tier's honesty boundary: a MISSING table is a refuse, distinct from a
     /// present-but-empty table, which is honest empty output).
     case noTabularData(app: String, named: String?)
+    /// `dialog` found no modal sheet / alert / dialog in the app to detect or
+    /// respond to. We REFUSE rather than fabricate a popup — there is nothing to
+    /// read and nothing to dismiss (the dialog tier's honesty boundary).
+    case noDialog(app: String)
 
     public var description: String {
         switch self {
@@ -278,6 +282,9 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             }
             return "no table/outline/list found in \(app)'s frontmost window — "
                 + "refusing to extract (the window exposes no AXTable/AXOutline/AXList)"
+        case let .noDialog(app):
+            return "no modal sheet / alert / dialog found in \(app) — refusing to "
+                + "fabricate a popup (nothing to detect or dismiss)"
         }
     }
 }

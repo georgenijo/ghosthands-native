@@ -58,6 +58,8 @@ struct GhostHandsCLI {
             await runDrag(Array(args.dropFirst()))
         case "scroll":
             runScroll(Array(args.dropFirst()))
+        case "dialog":
+            runDialog(Array(args.dropFirst()))
         case "key":
             runKey(Array(args.dropFirst()))
         case "clipboard", "clip":
@@ -1008,6 +1010,82 @@ struct GhostHandsCLI {
             + "unchanged (\(at) — already at the boundary?) (effect unverified)"
     }
 
+    // MARK: - dialog (detect | respond)
+
+    @MainActor
+    static func runDialog(_ rest: [String]) {
+        // `dialog <app>` detects; `dialog <app> --click "<button>"` responds. The
+        // `--click <button>` flag may appear in any order (mirrors the other flag
+        // loops); the first leftover positional is the app spec.
+        var appSpec: String?
+        var button: String?
+        var i = 0
+        while i < rest.count {
+            if rest[i] == "--click", i + 1 < rest.count {
+                button = rest[i + 1]
+                i += 2
+            } else {
+                if appSpec == nil { appSpec = rest[i] }
+                i += 1
+            }
+        }
+        guard let appSpec else { usage() }
+
+        do {
+            if let button {
+                let outcome = try GhostHands.dialogClick(button: button, appSpec: appSpec)
+                print(reportDialogClick(outcome))
+            } else {
+                let report = try GhostHands.dialog(appSpec: appSpec)
+                printDialogReport(report)
+            }
+        } catch let error as GhostHandsError {
+            fail("dialog", error)
+        } catch {
+            failUnexpected("dialog")
+        }
+    }
+
+    /// Print a DETECT report: the dialog's title, its message lines, and the list
+    /// of button names (with a (disabled) flag). The button list goes to stdout
+    /// (the actionable payload); the title/message context goes to stderr so a
+    /// caller can grab the choices cleanly. An empty message/button set is shown
+    /// honestly, never padded.
+    static func printDialogReport(_ r: DialogReport) {
+        let title = r.title?.isEmpty == false ? r.title! : "(untitled dialog)"
+        var header = "dialog in \(r.app): \(title)"
+        if !r.messageLines.isEmpty {
+            header += "\n" + r.messageLines.map { "  " + $0 }.joined(separator: "\n")
+        }
+        FileHandle.standardError.write(Data((header + "\n").utf8))
+        if r.buttons.isEmpty {
+            FileHandle.standardError.write(
+                Data("— dialog has no buttons (nothing to respond with)\n".utf8))
+        } else {
+            for b in r.buttons {
+                let flag = b.enabled ? "" : " (disabled)"
+                print(b.name + flag)
+            }
+            let footer = "— \(r.buttons.count) button(s); respond with: "
+                + "ghosthands dialog \(r.app.debugDescription) --click \"<button>\"\n"
+            FileHandle.standardError.write(Data(footer.utf8))
+        }
+    }
+
+    /// Honest one-liner for a `dialog --click`. VERIFIED quotes the observed
+    /// dismissal (no modal present after the press); DISPATCHED-UNVERIFIED states
+    /// plainly that AXPress was accepted but the dialog is still present / the
+    /// dismissal was not observed (exit 0, never a faked dismissal).
+    static func reportDialogClick(_ o: DialogClickOutcome) -> String {
+        let where_ = "(role=\(o.role)) in \(o.app)"
+        if o.verified {
+            return "pressed \(o.button.debugDescription) \(where_) — "
+                + "verified: \(o.evidence ?? "dialog dismissed")"
+        }
+        return "pressed \(o.button.debugDescription) \(where_) — AXPress accepted; "
+            + "dialog still present (dismissal unverified)"
+    }
+
     // MARK: - key
 
     @MainActor
@@ -1320,6 +1398,8 @@ struct GhostHandsCLI {
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
           ghosthands drag "<from>" "<to>" <app> [--visible]       drag one named element onto another (centers), verified by from-element move/vanish
           ghosthands scroll <app> <up|down|left|right> [amount] [--in <name>] [--visible]   scroll a list/scroll-area, verified by the scroll-bar position
+          ghosthands dialog <app>                     detect the frontmost modal sheet/alert/dialog: print its title/message + button names (refuses if none)
+          ghosthands dialog <app> --click "<button>"  press a button WITHIN the detected dialog, verified by the dialog being dismissed
           ghosthands key "<spec>" [app] [--visible]               post a keystroke/chord (e.g. return, cmd+s) — dispatched-unverified
           ghosthands clipboard read                   print the current pasteboard string (UTF-8); empty → honest note, exit 0
           ghosthands clipboard write "<text>"         set the pasteboard string, then READ IT BACK — verified by read-back
@@ -1359,6 +1439,8 @@ struct GhostHandsCLI {
           ghosthands drag 100 200 400 200 Preview
           ghosthands scroll Safari down
           ghosthands scroll System\\ Settings down 2 --in "Sidebar"
+          ghosthands dialog TextEdit
+          ghosthands dialog TextEdit --click "Don't Save"
           ghosthands key return Safari
           ghosthands key "cmd+shift+t" Chrome
           ghosthands key return                 (no app — posts to the frontmost app)
@@ -1547,6 +1629,19 @@ struct GhostHandsCLI {
             a cp that returns 0 but cannot be confirmed is dispatched-unverified,
             NEVER "installed". It does NOT verify Gatekeeper/quarantine/notarization,
             code-signature validity, or first-launch TCC — presence + Info.plist only.
+          - dialog DETECTS the frontmost modal sheet / alert / dialog in the app (an
+            AXSheet, or a window whose SUBROLE is AXDialog/AXSystemDialog) via a
+            BOUNDED AX walk (depth cap + visited-set — a cyclic tree never overflows),
+            and prints its title, its static-text message lines, and the names of its
+            BUTTONS. It REFUSES (.noDialog) when no modal is present — never fabricates
+            a popup. `dialog <app> --click "<button>"` RESPONDS: it re-detects the
+            modal, resolves the named button SCOPED TO THE DIALOG node (same refuse-on-
+            not-found / refuse-on-ambiguous rules as click, so a same-named button on a
+            background window is never pressed), AXPresses it, then WITNESSES by a fresh
+            read: a modal dialog GONE ⇒ VERIFIED (dismissed); a modal STILL PRESENT ⇒
+            dispatched-unverified — the press landed but the dialog did not go away (a
+            validation block, or a follow-up modal), NEVER a faked dismissal. A button
+            that rejects AXPress REFUSES (.actionRejected).
         """
         FileHandle.standardError.write(Data((text + "\n").utf8))
         exit(2)
