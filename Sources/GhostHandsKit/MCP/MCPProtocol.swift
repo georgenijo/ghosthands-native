@@ -111,19 +111,67 @@ public enum MCPProtocol {
         return .dispatchTool(id: req.id, name: name, arguments: arguments)
     }
 
-    /// The first required property that is absent or not a non-empty string, or
-    /// nil when all are present. Pure — lets a test pin the missing-arg path.
+    /// The first required property that is absent or empty, or nil when all are
+    /// present. Pure — lets a test pin the missing-arg path. A required arg is
+    /// SATISFIED by a non-empty string, OR a number, OR a boolean — so a typed
+    /// param (`x`/`y`/`w`/`h` numbers, a `force` bool) validates without being
+    /// forced through a string. The required key's declared TYPE in the tool's
+    /// schema decides which shapes count: a string-typed required key still needs
+    /// a non-empty string (an empty `name` is missing, as before); a numeric one
+    /// needs a number; a boolean one needs a bool. An unknown declared type falls
+    /// back to "any present non-null value".
     public static func firstMissingRequired(tool: MCPTools.Tool,
                                             arguments: JSONValue) -> String? {
         let args = arguments.objectValue ?? [:]
         for key in tool.required {
-            guard let v = args[key]?.stringValue, !v.isEmpty else { return key }
+            let declaredType = tool.properties.first { $0.name == key }?.type ?? "string"
+            guard let v = args[key], satisfies(v, declaredType: declaredType) else { return key }
         }
         return nil
+    }
+
+    /// True iff `value` is an acceptable presence for a required arg of the
+    /// declared JSON type. A string must be non-empty; a number/integer must be a
+    /// number; a boolean must be a bool. An unknown type accepts any non-null.
+    static func satisfies(_ value: JSONValue, declaredType: String) -> Bool {
+        switch declaredType {
+        case "string":
+            if case let .string(s) = value { return !s.isEmpty }
+            return false
+        case "number", "integer":
+            if case .number = value { return true }
+            return false
+        case "boolean":
+            if case .bool = value { return true }
+            return false
+        default:
+            if case .null = value { return false }
+            return true
+        }
     }
 
     /// Read an optional string argument (nil if absent / not a string).
     public static func string(_ key: String, from arguments: JSONValue) -> String? {
         arguments.objectValue?[key]?.stringValue
+    }
+
+    /// Read an optional number argument (nil if absent / not a number).
+    public static func number(_ key: String, from arguments: JSONValue) -> Double? {
+        if case let .number(n)? = arguments.objectValue?[key] { return n }
+        return nil
+    }
+
+    /// Read an optional integer argument (nil if absent / not a whole number).
+    public static func int(_ key: String, from arguments: JSONValue) -> Int? {
+        number(key, from: arguments).map { Int($0) }
+    }
+
+    /// Read an optional boolean argument; ABSENT ⇒ `default` (the opt-in flags
+    /// default false, mirroring the CLI). A present non-bool is treated as absent
+    /// (falls to the default) rather than coerced.
+    public static func bool(_ key: String, from arguments: JSONValue,
+                            default fallback: Bool = false) -> Bool {
+        if case let .bool(b)? = arguments.objectValue?[key] { return b }
+        return fallback
     }
 }
