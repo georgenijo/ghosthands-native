@@ -31,6 +31,8 @@ struct GhostHandsCLI {
             runDoubleClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
+        case "web":
+            runWeb(Array(args.dropFirst()))
         case "snapshot":
             runSnapshot(Array(args.dropFirst()))
         case "find":
@@ -176,6 +178,61 @@ struct GhostHandsCLI {
             + "\(o.action) accepted; no observable change (effect unverified)"
     }
 
+    // MARK: - web (read | tabs)
+
+    @MainActor
+    static func runWeb(_ rest: [String]) {
+        guard let sub = rest.first else { usage() }
+        let tail = Array(rest.dropFirst())
+        switch sub {
+        case "read": runWebRead(tail)
+        case "tabs": runWebTabs(tail)
+        default: usage()
+        }
+    }
+
+    @MainActor
+    static func runWebRead(_ rest: [String]) {
+        guard let browser = rest.first else { usage() }
+        do {
+            let result = try GhostHands.webRead(browser: browser)
+            let body = WebDigest.render(result.entries)
+            if !body.isEmpty { print(body) }
+            // Honest footer to stderr: distinguish "no page surface" from a page
+            // that is present but has no meaningful controls/text.
+            let note: String
+            if !result.hasWebArea {
+                note = "— no AXWebArea (page) found in \(result.app); "
+                    + "browser chrome only (nothing to read)"
+            } else {
+                note = "— \(result.count) page elements in \(result.app)"
+            }
+            FileHandle.standardError.write(Data((note + "\n").utf8))
+        } catch let error as GhostHandsError {
+            fail("web read", error)
+        } catch {
+            failUnexpected("web read")
+        }
+    }
+
+    @MainActor
+    static func runWebTabs(_ rest: [String]) {
+        guard let browser = rest.first else { usage() }
+        do {
+            let result = try GhostHands.webTabs(browser: browser)
+            for tab in result.tabs {
+                let mark = tab.selected ? "* " : "  "
+                print(mark + tab.title)
+            }
+            FileHandle.standardError.write(
+                Data("— \(result.tabs.count) tabs in \(result.app)\n".utf8))
+        } catch let error as GhostHandsError {
+            fail("web tabs", error)
+        } catch {
+            failUnexpected("web tabs")
+        }
+    }
+
     // MARK: - snapshot
 
     @MainActor
@@ -272,6 +329,8 @@ struct GhostHandsCLI {
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
+          ghosthands web read <browser>               page-scoped digest (chrome stripped, AX only)
+          ghosthands web tabs <browser>               list open tabs (* = selected); refuses if not exposed
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands version
@@ -285,6 +344,8 @@ struct GhostHandsCLI {
           ghosthands doubleclick "report.pdf" Finder
           ghosthands act increment "Volume" "System Settings"
           ghosthands snapshot Calculator --json
+          ghosthands web read Brave
+          ghosthands web tabs Chrome
           ghosthands find "7" Calculator
           ghosthands shot Calculator /tmp/calc.png
 

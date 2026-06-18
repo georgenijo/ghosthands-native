@@ -45,6 +45,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// Capture was attempted (with permission) but produced no usable pixels —
     /// e.g. an off-screen/occluded window. Honest REFUSE, no blank PNG written.
     case captureFailed(reason: String)
+    /// `web tabs` could not read a tab strip — the browser exposes no AXTabGroup
+    /// (or it lists no tabs) on the AX tree. We REFUSE rather than guess a tab
+    /// list (the web tier's honesty boundary for tab enumeration).
+    case tabsNotExposed(app: String)
 
     public var description: String {
         switch self {
@@ -92,6 +96,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "no on-screen windows to capture in \(app)"
         case let .captureFailed(reason):
             return "screenshot capture failed: \(reason)"
+        case let .tabsNotExposed(app):
+            return "no tab strip exposed on the AX tree in \(app) — the browser "
+                + "does not advertise an AXTabGroup of tabs (refusing to guess a "
+                + "tab list)"
         }
     }
 }
