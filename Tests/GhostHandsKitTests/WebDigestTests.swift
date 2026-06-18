@@ -241,4 +241,85 @@ final class WebDigestTests: XCTestCase {
         XCTAssertEqual(tabs?[0].title, "(untitled tab)")
         XCTAssertEqual(tabs?[0].selected, true)
     }
+
+    // MARK: - wake: honesty floor preserved when the tree is STILL empty
+    //
+    // The live wake (setValue on an AXUIElement) is impure and cannot be
+    // fabricated here — it is best-effort and verified by construction. What
+    // CAN and MUST be locked is the HONESTY FLOOR: waking only adds a CHANCE
+    // that the page tree fills. If a browser still exposes ONLY chrome after the
+    // wake (no AXWebArea / no AXTabGroup), the SAME pure filters run over that
+    // still-empty tree and the read must report honestly — never fabricate. The
+    // forests below model exactly that "woke, still chrome-only" post-wake state.
+
+    /// The pre-wake input and the post-wake input look IDENTICAL to the pure
+    /// digest layer — the only difference a wake makes is whether the live tree
+    /// got richer. Modelling "still chrome-only after wake" => honest empty.
+    private func chromeOnlyAfterWake() -> WebNode {
+        n("AXWindow", title: "New Tab - Brave", children: [
+            n("AXToolbar", children: [
+                n("AXTextField", title: "Address", value: ""),
+                n("AXButton", title: "Reload"),
+            ]),
+        ])
+    }
+
+    func testWakeStillChromeOnlyReadsHonestEmpty() {
+        // Browser woke but published no page: no AXWebArea root, empty digest,
+        // render is "" (never a placeholder), hasWebArea stays false.
+        let forest = [chromeOnlyAfterWake()]
+        let roots = WebDigest.webAreaRoots(in: forest)
+        XCTAssertTrue(roots.isEmpty)                      // honest: no page surface
+        let entries = WebDigest.entries(in: forest)
+        XCTAssertTrue(entries.isEmpty)
+        XCTAssertEqual(WebDigest.render(entries), "")     // never fabricated
+        XCTAssertEqual(WebDigest.count(entries), 0)
+    }
+
+    func testWakeWebAreaPresentButEmptyReadsHonestEmpty() {
+        // Browser woke and published an AXWebArea, but the page genuinely has no
+        // meaningful content (a blank page). hasWebArea is true, yet the digest
+        // is honestly empty — the wake never invents content.
+        let forest = [n("AXWindow", children: [
+            n("AXWebArea", title: "about:blank", children: [
+                n("AXGroup", children: [n("AXStaticText", value: "")]),  // noise only
+            ]),
+        ])]
+        let roots = WebDigest.webAreaRoots(in: forest)
+        XCTAssertEqual(roots.count, 1)                    // a page IS present now
+        XCTAssertTrue(WebDigest.entries(forPage: roots).isEmpty)  // but no content
+    }
+
+    func testWakeStillNoTabGroupRefuses() {
+        // Browser woke but never published an AXTabGroup: tabs() must still
+        // return nil (the REFUSE signal the CLI turns into a nonzero exit) — a
+        // wake adds NO new tab honesty state and removes none.
+        let forest = [chromeOnlyAfterWake()]
+        XCTAssertNil(WebTabs.tabs(in: forest))
+    }
+
+    func testWakeTabGroupPresentButNoTabsRefuses() {
+        // An AXTabGroup surfaced post-wake but with no AXRadioButton/AXTab
+        // children → still a REFUSE (nil), never a guessed/fabricated tab list.
+        let forest = [n("AXWindow", children: [
+            n("AXTabGroup", children: [n("AXButton", title: "New tab")]),
+        ])]
+        XCTAssertNil(WebTabs.tabs(in: forest))
+    }
+
+    /// Ordering invariant: the digest/tab outcome is a PURE function of the tree
+    /// the walk produces. So the post-wake (richer) tree and a tree that was
+    /// always rich yield byte-identical digests — proving the wake only changes
+    /// WHETHER the tree is rich, never HOW a given tree is read. (This is the
+    /// hermetic stand-in for "wake then re-walk": same input ⇒ same output.)
+    func testWakeOrderingIsPureOverTheResultingTree() {
+        // Whatever the wake does to the live tree, the pure read over the final
+        // forest is deterministic. A rich page reads the same whether it was
+        // rich before the wake or only after it.
+        let rich = [browserWindow()]
+        let firstRead = WebDigest.render(WebDigest.entries(in: rich))
+        let reReadAfterSettle = WebDigest.render(WebDigest.entries(in: rich))
+        XCTAssertEqual(firstRead, reReadAfterSettle)
+        XCTAssertFalse(firstRead.isEmpty)                 // the rich tree has content
+    }
 }

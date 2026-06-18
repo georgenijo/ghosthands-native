@@ -284,6 +284,41 @@ public enum WebTabs {
 enum WebWalker {
     static let maxDepth = 80
 
+    /// Wake a browser's lazily-built web a11y tree BEFORE we walk it.
+    ///
+    /// Chromium (and other AX-savvy apps) build the web AXWebArea / AXTabGroup
+    /// tree on demand: a cold window only exposes browser chrome until an
+    /// accessibility client asks for the page. Setting `AXManualAccessibility`
+    /// on the app's AX APPLICATION element is Chromium's documented opt-in that
+    /// makes the browser publish the page tree.
+    ///
+    /// We DELIBERATELY set ONLY `AXManualAccessibility`, not
+    /// `AXEnhancedUserInterface`. Enhanced-UI is an AppKit-wide flag that forces
+    /// an alternate UI mode and is a known cause of layout/perf side-effects in
+    /// AppKit/Electron apps; since there is no bundle-id allowlist, a `web read`
+    /// against a non-Chromium app (an Electron editor, Safari, …) would mutate
+    /// that live app's UI mode as a side-effect of a READ. `AXManualAccessibility`
+    /// is the narrow, Chromium-specific a11y opt-in: non-Chromium apps simply
+    /// refuse it (no-op), so the wake stays a targeted no-side-effect nudge.
+    ///
+    /// Best-effort and ADDITIVE to honesty, never a guarantee:
+    ///  - We pass `true` directly; AXorcist's `setValue` bridges Swift `Bool`
+    ///    to `CFBoolean` (Element.swift), so the raw-string attribute sets.
+    ///  - The attribute is a raw AX string (NOT in `AXAttributeNames`), so we
+    ///    use a string literal.
+    ///  - The `Bool` result is IGNORED with `_ =`. A non-browser app simply
+    ///    refuses the set (no-op); a refusal must NOT break the honest read.
+    ///    Waking only adds a CHANCE that the subsequent walk finds a page — if
+    ///    the tree is still empty after waking, the caller reports that honestly.
+    ///
+    /// Call on the LIVE AX application element (the `Element` wrapping
+    /// `AXUIElementCreateApplication(pid)`) before the first walk AND on any
+    /// freshly-rebuilt app element in a settle/retry — a brand-new
+    /// `AXUIElement` does not inherit the manual-accessibility flag.
+    static func wakeAccessibility(_ app: Element) {
+        _ = app.setValue(true, forAttribute: "AXManualAccessibility")
+    }
+
     static func forest(of appRoot: Element) -> [WebNode] {
         let windows = appRoot.windows() ?? []
         var visited = Set<Element>()
@@ -333,13 +368,19 @@ extension GhostHands {
         }
         let target = try Target.resolve(browser)
 
+        // Wake the lazily-built web a11y tree before the first walk (no-op on
+        // non-browsers; best-effort, result ignored).
+        WebWalker.wakeAccessibility(target.element)
         var forest = WebWalker.forest(of: target.element)
         var roots = WebDigest.webAreaRoots(in: forest)
         // Sparse-tree retry: no web area OR a web area with no kept content can be
-        // a lazily-built tree a beat before it fills. Settle once and re-read.
+        // a lazily-built tree a beat before it fills. Settle once and re-read on a
+        // fresh app element — which must be woken again (a brand-new AXUIElement
+        // does not inherit the manual-accessibility flag).
         if (roots.isEmpty || WebDigest.entries(forPage: roots).isEmpty), settle > 0 {
             Thread.sleep(forTimeInterval: settle)
             let fresh = Element(AXUIElementCreateApplication(target.pid))
+            WebWalker.wakeAccessibility(fresh)
             forest = WebWalker.forest(of: fresh)
             roots = WebDigest.webAreaRoots(in: forest)
         }
@@ -360,17 +401,22 @@ extension GhostHands {
     /// fabricates a tab list.
     @MainActor
     public static func webTabs(browser: String,
-                               settle: TimeInterval = 0.4) throws -> WebTabsResult {
+                               settle: TimeInterval = 0.6) throws -> WebTabsResult {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
         }
         let target = try Target.resolve(browser)
 
+        // Wake the lazily-built tree before the first walk (no-op on
+        // non-browsers; best-effort, result ignored). A cold wake may need a
+        // beat to publish the AXTabGroup, so the settle below covers that.
+        WebWalker.wakeAccessibility(target.element)
         var forest = WebWalker.forest(of: target.element)
         var tabs = WebTabs.tabs(in: forest)
         if tabs == nil, settle > 0 {
             Thread.sleep(forTimeInterval: settle)
             let fresh = Element(AXUIElementCreateApplication(target.pid))
+            WebWalker.wakeAccessibility(fresh)
             forest = WebWalker.forest(of: fresh)
             tabs = WebTabs.tabs(in: forest)
         }
