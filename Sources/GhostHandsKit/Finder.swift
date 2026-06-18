@@ -65,12 +65,18 @@ public struct ElementFacts: Sendable, Equatable {
     /// Used by `act` for the pre-check (REFUSE if the requested action is absent)
     /// and by `doubleclick` to prefer AXOpen. May be empty when AX returns nil.
     public var supportedActions: [String]
+    /// The element's on-screen frame (screen coords at read time), read verbatim
+    /// from the AX tree via `Element.frame()` (= AXPosition + AXSize). HONEST:
+    /// nil when AX exposes NO position/size — surfaced as a marked "no readable
+    /// frame", never a fabricated box. A later scroll/resize moves the element,
+    /// so these coordinates are a snapshot, not a stable id.
+    public var frame: CGRect?
 
     public init(role: String? = nil, subrole: String? = nil, title: String? = nil,
                 identifier: String? = nil, value: String? = nil,
                 roleDescription: String? = nil, descriptionText: String? = nil,
                 supportsPress: Bool = false, enabled: Bool? = nil,
-                supportedActions: [String] = []) {
+                supportedActions: [String] = [], frame: CGRect? = nil) {
         self.role = role
         self.subrole = subrole
         self.title = title
@@ -81,6 +87,7 @@ public struct ElementFacts: Sendable, Equatable {
         self.supportsPress = supportsPress
         self.enabled = enabled
         self.supportedActions = supportedActions
+        self.frame = frame
     }
 
     /// True iff the control advertises a named AX action — the honest pre-check
@@ -261,7 +268,8 @@ enum Finder {
             descriptionText: element.descriptionText(),
             supportsPress: actions.contains("AXPress"),
             enabled: element.isEnabled(),
-            supportedActions: actions)
+            supportedActions: actions,
+            frame: element.frame())   // real AX geometry; nil when AX gives none
     }
 
     private static func options() -> ElementSearchOptions {

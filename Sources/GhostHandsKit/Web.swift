@@ -184,7 +184,28 @@ public enum WebDigest {
             parts.append("value=\(value.debugDescription)")
         }
         if entry.facts.enabled == false { parts.append("(disabled)") }
+        // WHERE — only ACTIONABLE controls carry coordinates. The point of the
+        // frame is pixel-TARGETING a control; static text/headings are read for
+        // context, not clicked, so tagging them with coords buries the signal and
+        // is omitted by design (NOT a hidden missing frame). For an interactive
+        // role: a real AX frame renders as @(x,y w×h); a control whose AX exposes
+        // no position/size is MARKED "frame:?" — honest, never a fabricated box.
+        if interactiveRoles.contains(role) {
+            if let frame = entry.facts.frame {
+                parts.append(frameString(frame))
+            } else {
+                parts.append("frame:?")
+            }
+        }
         return indent + parts.joined(separator: " ")
+    }
+
+    /// A coordinate token for a control's on-screen frame, e.g. `@(412,240 86×32)`.
+    /// The leading `@` sigil keeps a coordinate visually distinct from `value=…`
+    /// and from content, so it can never be misread as the element's text. Mirrors
+    /// the repo's existing `(x,y w×h)` rect convention (PixelClick.rectString).
+    public static func frameString(_ r: CGRect) -> String {
+        "@(\(Int(r.minX.rounded())),\(Int(r.minY.rounded())) \(Int(r.width.rounded()))×\(Int(r.height.rounded())))"
     }
 
     /// The full page digest as indented text (pre-order). Empty when the page
