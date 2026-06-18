@@ -48,6 +48,8 @@ struct GhostHandsCLI {
             runSnapshot(Array(args.dropFirst()))
         case "find":
             runFind(Array(args.dropFirst()))
+        case "wait":
+            runWait(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
         case "click-at":
@@ -730,6 +732,93 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - wait
+
+    @MainActor
+    static func runWait(_ rest: [String]) {
+        // Flags in any order: --gone (bool), --timeout <seconds>, --interval <ms>.
+        // The remaining positionals are <name> <app>.
+        var gone = false
+        var timeout: TimeInterval = 5
+        var interval: TimeInterval = 0.15   // 150 ms default poll cadence
+        var pos: [String] = []
+        var i = 0
+        while i < rest.count {
+            switch rest[i] {
+            case "--gone":
+                gone = true
+            case "--timeout":
+                let raw = i + 1 < rest.count ? rest[i + 1] : nil
+                // The deadline MUST be finite and positive: a non-finite timeout
+                // (`inf`/`nan`) or a non-positive one would defeat the verb's
+                // central guarantee — a hard wall-clock wall. `inf` polls forever
+                // (deadline never passes); `nan` and `<= 0` collapse to exactly one
+                // poll with a garbage deadline. Refuse before spinning.
+                guard let s = raw.flatMap(Double.init), s.isFinite, s > 0 else {
+                    failWaitArg("--timeout", raw)
+                }
+                timeout = s; i += 1
+            case "--interval":
+                let raw = i + 1 < rest.count ? rest[i + 1] : nil
+                // The poll cadence must be finite and non-negative. A negative
+                // interval is a CPU-hot busy-spin (the deadline still bounds it, but
+                // the cadence is silently not what was asked); `nan`/`inf` are
+                // nonsense naps. 0 is allowed — it means "poll back-to-back" (the
+                // loop skips the sleep when interval <= 0).
+                guard let ms = raw.flatMap(Double.init), ms.isFinite, ms >= 0 else {
+                    failWaitArg("--interval", raw)
+                }
+                interval = ms / 1000; i += 1
+            default:
+                pos.append(rest[i])
+            }
+            i += 1
+        }
+        guard pos.count >= 2 else { usage() }
+        let name = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try GhostHands.wait(name: name, appSpec: appSpec,
+                                              wantGone: gone, timeout: timeout,
+                                              interval: interval)
+            print(reportWait(outcome))
+            // exit 0 — the condition was OBSERVED met.
+        } catch let error as GhostHandsError {
+            // A wait that times out is the EXPECTED refuse → nonzero exit (the
+            // honesty boundary: the condition was never observed). It reuses the
+            // standard fail() exit-1 path; the message names it as a timeout.
+            fail("wait", error)
+        } catch {
+            failUnexpected("wait")
+        }
+    }
+
+    /// Honest one-liner for a met wait. ALWAYS quotes the OBSERVED evidence —
+    /// elapsed seconds + poll count — because a `WaitOutcome` only ever exists for
+    /// a condition that was observed met (a timeout is a thrown refuse, never an
+    /// outcome). Names which sense was satisfied (appeared vs disappeared).
+    static func reportWait(_ o: WaitOutcome) -> String {
+        let cond = o.wantedGone ? "gone from" : "present in"
+        let secs = String(format: "%.2f", o.elapsed)
+        return "\(o.name.debugDescription) \(cond) \(o.app) — observed after "
+            + "\(secs)s (\(o.polls) poll\(o.polls == 1 ? "" : "s"))"
+    }
+
+    /// A bad --timeout/--interval value is a USAGE error (exit 2), mirroring the
+    /// scroll bad-amount wiring — we refuse before spinning rather than coerce a
+    /// garbage deadline. "Bad" is not just non-numeric: a non-finite (`inf`/`nan`)
+    /// or out-of-range value (`--timeout` must be > 0, `--interval` must be >= 0)
+    /// is rejected here too, because it would defeat the hard wall-clock deadline.
+    static func failWaitArg(_ flag: String, _ raw: String?) -> Never {
+        let v = raw?.debugDescription ?? "(missing)"
+        let want = flag == "--timeout"
+            ? "a finite number > 0"
+            : "a finite number >= 0"
+        FileHandle.standardError.write(
+            Data("wait failed: \(flag) expects \(want), got \(v)\n".utf8))
+        exit(2)
+    }
+
     // MARK: - shot
 
     @MainActor
@@ -1258,6 +1347,7 @@ struct GhostHandsCLI {
           ghosthands window resize <w> <h> <app> [--window <id|title>]  set size (invisible AX set), verified by read-back
           ghosthands window raise <app> [--window <id|title>]          AXRaise (stacking only) — dispatched-unverified
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
+          ghosthands wait "<name>" <app> [--gone] [--timeout <s>] [--interval <ms>]   poll until a named element appears (or --gone: disappears); refuses on timeout
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
@@ -1295,6 +1385,9 @@ struct GhostHandsCLI {
           ghosthands window resize 800 600 Notes --window "Untitled"
           ghosthands window raise Preview --window 12345
           ghosthands find "7" Calculator
+          ghosthands wait "Save" TextEdit
+          ghosthands wait "Spinner" Safari --gone --timeout 10
+          ghosthands wait "Login" MyApp --timeout 8 --interval 250
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
@@ -1386,6 +1479,16 @@ struct GhostHandsCLI {
             (we use the raw raise, not focusWindow/showWindow). A rejected raise REFUSES.
           - window move/resize/raise REFUSE when the app has >1 window and no --window
             selector (mirroring click's ambiguous refuse), rather than mutate window[0].
+          - wait polls Finder.resolve for a named element on a real wall-clock DEADLINE
+            loop (the testing backbone — a real condition wait, not a magic sleep). Without
+            --gone it succeeds the instant the element EXISTS; with --gone the instant it is
+            ABSENT. Between checks it sleeps a bounded --interval (the poll CADENCE, default
+            150ms, NOT a fixed guess at the work's duration), and the hard --timeout (default
+            5s) is the real bound. It reports the OBSERVED elapsed time + poll count. A
+            timeout is a REFUSE (nonzero exit), NEVER a fabricated success: met is reported
+            ONLY when the condition is observed met. App resolution is inside the loop, so a
+            not-yet-running app is a not-yet poll (it waits for the app to appear too), not an
+            instant miss; a bad --timeout/--interval is a usage error (exit 2) before spinning.
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
           - click-at / drag are the PIXEL tier (no AX element; coords from the caller).

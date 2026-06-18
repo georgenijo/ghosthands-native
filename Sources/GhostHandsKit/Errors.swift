@@ -130,6 +130,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than post a wheel into the void (the scroll tier's honesty
     /// boundary: nothing to move, nothing to witness).
     case noScrollArea(app: String, named: String?)
+    /// `wait` polled to its deadline without ever OBSERVING the condition — the
+    /// element never appeared (or, with `--gone`, never disappeared). A timeout is
+    /// a REFUSE (nonzero exit), never a fabricated success: we only report met when
+    /// the condition is observed met (the wait tier's honesty boundary).
+    case waitTimeout(name: String, app: String, wantedGone: Bool, seconds: TimeInterval)
 
     public var description: String {
         switch self {
@@ -251,6 +256,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             }
             return "no scroll area found in \(app)'s frontmost window — refusing to "
                 + "scroll (the window exposes no AXScrollArea to move)"
+        case let .waitTimeout(name, app, wantedGone, seconds):
+            let cond = wantedGone ? "to disappear" : "to appear"
+            return "timed out after \(String(format: "%g", seconds))s waiting for "
+                + "\(name.debugDescription) \(cond) in \(app) — condition never "
+                + "observed (refusing to report a met that did not happen)"
         }
     }
 }
