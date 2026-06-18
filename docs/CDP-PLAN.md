@@ -138,3 +138,42 @@ Impure files (`CDPDiscovery`, the real socket, `CDPLaunch`) exercised only in ma
 `ValueVerdict.swift` + `Witness.swift` (verdict pattern `CDPVerdict` mirrors);
 `MCP/JSONRPC.swift` (hand-rolled JSON-RPC precedent, no dep).
 Reference blueprint: `/Users/george-mac-mini/Documents/code/ghosthands/src/ghosthands/webtier.py` + `tests/test_webtier.py`.
+
+## Mined from agent-browser (vercel-labs, studied 2026-06-18)
+
+Competitive reference cloned at `/Users/george-mac-mini/Documents/code/agent-browser`
+(Apache-2.0, Rust + raw CDP, headless-first, web-only). It is mature on web depth but
+**assumes success on dispatch** for `click`/`fill`/`type` (returns OK after sending the
+CDP event, no world read-back — effect-check delegated to the LLM's next snapshot). That
+is exactly the honesty gap our `verified`/`dispatched-unverified`/`refuse` model closes —
+so we **mine its mechanics, not its contract**. Concretely fold into the slices above:
+
+- **Occlusion / "covered-by" hit-test as a refuse primitive** (their `element.rs:731-827`).
+  Before a CDP click, run `document.elementFromPoint(x,y)` (descend same-origin iframes,
+  walk shadow-including ancestors + `<label>.control`); if a DIFFERENT element would receive
+  the click, **REFUSE** naming the covering element — never click the wrong thing. Add to
+  Slice 2's `web click`. Honest-by-design; matches our refuse-on-ambiguity ethos.
+- **Read-back on EVERY mutating verb** (they only read back `check`/`uncheck`). Our
+  `CDPVerdict` already requires this — keep it for click (DOM/URL/attr diff), fill/type
+  (`get value` confirm), select (post-state, not just option-exists).
+- **Security defaults — better than the §4 draft, adopt for the opt-in launch path:**
+  launch with an **ephemeral `--remote-debugging-port=0`** and read the actual port from
+  Chrome's **`DevToolsActivePort` sidecar** in the user-data-dir (NOT a fixed 9222 / port
+  scan); bind `127.0.0.1` only; isolated temp `--user-data-dir` by default; keep the Chrome
+  sandbox on (gate `--no-sandbox` behind root/container detection only). (their
+  `chrome.rs:151,206,650,1037`.) For the connect-to-existing default, still probe a known
+  port (9222) since that's what a user most likely already set.
+- **Compact snapshot → stable ref model** (their `snapshot.rs`, `Accessibility.getFullAXTree`
+  tracked by `backendNodeId`, ~200-400 tokens, refs go stale on page change). Good DOM analog
+  to our AX digest for the `web read --cdp` output; pair with web-frames-style boxes.
+- **Error taxonomy + AI-friendly messages** (their `policy.rs:to_ai_friendly_error`): map
+  occluded / not-visible / not-found / multiple-match / timeout onto our honest verdict
+  strings so DOM failures read identically to AX failures.
+- **MCP tool *profiles* + a CLI↔MCP parity test** (their `parity_tests.rs`): for M5, a small
+  default tool profile + `--tools all`, paginated discovery, and a test that keeps MCP == CLI.
+- **Selector fallback ladder:** AX/snapshot ref → semantic locator (role/text/label) → CSS/XPath.
+
+**Do NOT copy:** their dispatch==success contract (the thing we reject); their evals as a
+correctness oracle (they measure skill-selection + latency, not real task completion); the
+heavy mandatory stack (~150MB Chrome + always-on daemon) — CDP stays an OPTIONAL tier behind
+the AX core; pushing wait-selection onto the agent (our settle/witness does the waiting).
