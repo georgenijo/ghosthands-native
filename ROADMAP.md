@@ -158,7 +158,18 @@ read; a stateful-but-unlabeled control is kept, not dropped. **#11 ✅ shipped**
 no-JS extraction verbs `web text`/`web attr`/`web count` (`--all` for every match)
 + scoped `web read --in <css>`; invalid/no-match REFUSES, `count` of nothing is an
 honest 0. Live-verified extracting HN top-5 (titles + points + links) with no
-`web eval`. Remaining: the #7 see-the-words find backup (scheduled tail).
+`web eval`.
+
+**#7 see-the-words backup ✅ shipped** — `web click/fill --text "<visible>" [--nth N]`
+addresses by what a human reads (visible text / field label), re-resolved live,
+ranks ties + reports the pick, refuses on no-match / out-of-range. Live-verified.
+
+**Web-ergonomics parity: GAP CLOSED.** All five work-list issues green; the web
+subset of the 11-task battery re-run with the new verbs (HN refs+extraction, the
+form-state checkbox toggle proven by re-read, the DuckDuckGo find-backup fill) —
+agent-browser's driving feel, ghosthands' honesty + native reach kept. See
+[`docs/WEB-PARITY.md`](./docs/WEB-PARITY.md) verdict. Optional polish left: #6
+(post-click DOM read-back) + #5 (native `--nth`/`--role`/`--text`).
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the

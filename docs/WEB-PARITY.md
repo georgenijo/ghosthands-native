@@ -89,7 +89,7 @@ P0 closes ~80% of the gap. All keep the honesty contract (verify-or-refuse).
 
 | Issue | Title | Pri | One line |
 |---|---|---|---|
-| [#7](https://github.com/georgenijo/ghosthands-native/issues/7) | shared `@ref` addressing (+ see-the-words backup) | **P0** ✅ | **shipped** (ref primary; see-the-words backup = scheduled tail) — look and click share numbered handles |
+| [#7](https://github.com/georgenijo/ghosthands-native/issues/7) | shared `@ref` addressing (+ see-the-words backup) | **P0** ✅ | **shipped** — ref primary (`@eN`) + see-the-words backup (`--text`/`--nth`); look and click share numbered handles |
 | [#9](https://github.com/georgenijo/ghosthands-native/issues/9) | managed throwaway session (`web open --headed`/`web close`) | **P0** ✅ | **shipped** — one command, auto-port, ready-wait; later verbs auto-target it (no --debug-port) |
 | [#10](https://github.com/georgenijo/ghosthands-native/issues/10) | page-side waits (`web wait --text/--url/--selector/--load`) | **P0** ✅ | **shipped** — nav+content flow sequenced with `web wait` alone; timeout REFUSES like AX `wait` |
 | [#8](https://github.com/georgenijo/ghosthands-native/issues/8) | form-control state in `web read` (`checked`/`selected`/`value`) | P1 ✅ | **shipped** — checked/selected/expanded/disabled inline; verify a toggle in one read |
@@ -119,3 +119,33 @@ The reasons to bet on ghosthands over agent-browser — keep every one:
 
 Land #7 + #9 + #10 and ghosthands has agent-browser's web *feel* **plus** the
 honesty and native reach agent-browser structurally lacks. That's a win, not a tie.
+
+---
+
+## Verdict (2026-06-18) — gap CLOSED
+
+All five work-list issues shipped green on `feat/web-parity` (#7 refs + see-the-words
+backup, #9 managed session, #10 page-side waits, #8 form-control state, #11 no-JS
+extraction), each hermetically tested + live-verified on a throwaway Brave. The web
+subset of the 11-task battery was re-run end-to-end with the new verbs:
+
+- **Hacker News** — `web open` → `web wait --selector` → `web count` → `web text --all`
+  (headlines, no `eval`) → `web read` (`@eN`) → `web click @eN` VERIFIED by navigation
+  → `web close`. One look, point by number.
+- **the-internet checkboxes** — `web read` showed `checked=true/false` inline (#8); a
+  `@ref` toggle reported honestly "dispatched; URL unchanged — effect unverified", and
+  the **re-read proved the flip** (`checked=false`→`true`). Honesty intact: the effect
+  was earned by observation, never asserted.
+- **DuckDuckGo** — `web fill --text "Search"` resolved the field by its label (the
+  see-the-words backup) and VERIFIED by read-back.
+
+ghosthands now matches agent-browser's driving *feel* (shared `@ref` handles, a
+one-command managed session, page-side waits, inline form state, no-JS extraction,
+a see-the-words backup) **while keeping** what agent-browser structurally lacks:
+verify-or-refuse honesty on every verb, native-AppKit reach, a real (Widevine/H.264)
+browser, and invisible background operation. **Win, not a tie.**
+
+Optional polish remaining (not on the must-ship list): **#6** post-click DOM
+read-back so an in-page (non-navigating) toggle earns VERIFIED from the click itself
+(today it's re-read-proven), and **#5** `type`/`set-value` `--nth`/`--role`/`--text`
+on the native AX side.
