@@ -293,6 +293,8 @@ struct GhostHandsCLI {
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
         case "fill": await runWebFill(tail)
+        case "html": await runWebHtml(tail)
+        case "eval": await runWebEval(tail)
         default: usage()
         }
     }
@@ -438,6 +440,49 @@ struct GhostHandsCLI {
             exit(2)
         }
         fail(verb, error)
+    }
+
+    // MARK: - web html / web eval (CDP-only DOM read verbs — Slice 3)
+
+    @MainActor
+    static func runWebHtml(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        // web html <selector> <browser>
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let browser = positional[1]
+        do {
+            let result = try await GhostHands.webHtml(
+                selector: selector, browser: browser, lens: lens, debugPort: port)
+            print(WebHtml.render(result.shaped))
+            // Honest footer to stderr: name the resolved selector + the lens.
+            FileHandle.standardError.write(Data(
+                "— \(result.selector) in \(result.app) (via CDP, port \(result.port))\n".utf8))
+        } catch let error as GhostHandsError {
+            failWebActuate("web html", error)
+        } catch {
+            failUnexpected("web html")
+        }
+    }
+
+    @MainActor
+    static func runWebEval(_ rest: [String]) async {
+        let (lens, port, positional) = parseWebLens(rest)
+        // web eval <js> <browser>
+        guard positional.count >= 2 else { usage() }
+        let js = positional[0]
+        let browser = positional[1]
+        do {
+            let result = try await GhostHands.webEval(
+                js: js, browser: browser, lens: lens, debugPort: port)
+            print(result.value)
+            FileHandle.standardError.write(Data(
+                "— evaluated in \(result.app) (via CDP, port \(result.port))\n".utf8))
+        } catch let error as GhostHandsError {
+            failWebActuate("web eval", error)
+        } catch {
+            failUnexpected("web eval")
+        }
     }
 
     // MARK: - navigate
@@ -1090,6 +1135,8 @@ struct GhostHandsCLI {
           ghosthands web tabs <browser> [--cdp|--ax] [--debug-port N]   list open tabs (CDP lists background tabs too; AX marks * selected)
           ghosthands web click "<selector>" <browser> [--cdp|--debug-port N]        click a CSS-selected element (CDP-only), verified by navigation
           ghosthands web fill "<selector>" "<text>" <browser> [--cdp|--debug-port N] set a CSS-selected input's value (CDP-only), verified by read-back
+          ghosthands web html "<selector>" <browser> [--cdp|--debug-port N]         dump a CSS-selected element's outerHTML + attrs + computed style (CDP-only read)
+          ghosthands web eval "<js>" <browser> [--cdp|--debug-port N]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back
@@ -1121,6 +1168,8 @@ struct GhostHandsCLI {
           ghosthands web tabs Chrome
           ghosthands web click "#submit" Brave
           ghosthands web fill "input[name=q]" "swift" Chrome
+          ghosthands web html "#submit" Brave
+          ghosthands web eval "document.title" Chrome
           ghosthands navigate "example.com" Brave
           ghosthands navigate "https://docs.swift.org/"
           ghosthands windows Finder
@@ -1194,6 +1243,16 @@ struct GhostHandsCLI {
             the value back: readback == text is VERIFIED, anything else is dispatched-
             unverified (a field that rejects/caps/transforms the set is NEVER success). A
             SECURE (password) input is REFUSED — its value can't be read back to verify.
+          - web html / web eval are CDP-only READ verbs (a CSS selector / a JS expression
+            has no AX equivalent; a forced --ax REFUSES). web html dumps, for the FIRST
+            element a selector resolves to, exactly what the DOM exposes: its outerHTML
+            (sliced to 20000 chars, truncation flagged), every attribute name→value, and a
+            CURATED computed-style subset (display/visibility/position/color/background/
+            font-size/width/height) — a missing selector REFUSES (selectorNotFound), never
+            an empty shell; a prop the page didn't return reads '(not reported)', never
+            fabricated. web eval Runtime.evaluates the expression (returnByValue,
+            awaitPromise) and prints the value; a page-side THROW is surfaced as a CDP
+            transport error carrying the exception text, NEVER a fake empty success.
           - windows is a pure read (no focus steal, no AXRaise); a nil window id/title/
             display is reported as unknown ('?' / off-screen), never fabricated.
           - window move/resize set an AX attribute INVISIBLY (cursor-less, no focus steal,

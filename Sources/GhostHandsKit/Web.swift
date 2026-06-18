@@ -950,3 +950,80 @@ extension GhostHands {
         return resultObj["value"] as? String
     }
 }
+
+// MARK: - CDP-only DOM read verbs (web html / web eval) — Slice 3
+
+extension GhostHands {
+    /// A `web html` result handed to the CLI: the browser name, the selector read,
+    /// the SHAPED (pure) result, and the served port (for the footer).
+    public struct WebHtmlResult: Sendable {
+        public let app: String
+        public let selector: String
+        public let shaped: WebHtml.Shaped
+        public let port: Int
+    }
+
+    /// A `web eval` result handed to the CLI: the browser name, the (already
+    /// stringified) value the page returned, and the served port. A page-side THROW
+    /// never reaches here — it is surfaced as a `cdpTransport` refuse upstream.
+    public struct WebEvalResult: Sendable {
+        public let app: String
+        public let value: String
+        public let port: Int
+    }
+
+    /// `web html <selector>` over CDP. Resolve the first debuggable page target,
+    /// `Runtime.evaluate` the html probe, and shape the result PURELY.
+    ///
+    ///   not found → throw `selectorNotFound` (from the pure shaper)
+    ///   --ax      → throw `selectorNeedsCDP` (the selector verbs REQUIRE CDP)
+    ///   else      → the shaped { tag, outerHTML, attrs, computed } for the CLI to
+    ///               render in clear sections. HONEST: reports exactly what the DOM
+    ///               exposed — never a fabricated attribute or style.
+    @MainActor
+    public static func webHtml(selector: String, browser: String, lens: WebLens,
+                               debugPort: Int = 9222)
+        async throws -> WebHtmlResult {
+        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
+                                                       port: debugPort)
+        let session = try await openPageSession(target: target, port: debugPort)
+        let probe = try await evaluateObject(
+            session, WebHtml.htmlProbeExpression(selector: selector))
+        // The pure shaper raises `selectorNotFound` on a `found:false` probe.
+        let shaped = try WebHtml.shape(probe, selector: selector, app: target.name)
+        return WebHtmlResult(app: target.name, selector: selector,
+                             shaped: shaped, port: debugPort)
+    }
+
+    /// `web eval <js>` over CDP. Resolve the first debuggable page target,
+    /// `Runtime.evaluate` the given JS (returnByValue + awaitPromise), and classify
+    /// the reply PURELY.
+    ///
+    ///   --ax            → throw `selectorNeedsCDP` (CDP-only power tool)
+    ///   page threw      → throw `cdpTransport(reason:)` carrying the exception text
+    ///                     — surface the error, NEVER a fake empty success
+    ///   else            → the returned value, stringified for printing.
+    @MainActor
+    public static func webEval(js: String, browser: String, lens: WebLens,
+                               debugPort: Int = 9222)
+        async throws -> WebEvalResult {
+        let target = try await resolveForSelectorVerb(browser: browser, lens: lens,
+                                                       port: debugPort)
+        let session = try await openPageSession(target: target, port: debugPort)
+        // Evaluate the caller's expression directly (the WHOLE point of `web eval`
+        // is the raw expression — it is the verb's input, never trusted as our code
+        // beyond what the user typed). We DON'T go through `evaluateObject` because
+        // the result may be ANY type (string/number/array), not just an object.
+        let reply = try await session.call("Runtime.evaluate", params: [
+            "expression": js,
+            "returnByValue": true,
+            "awaitPromise": true,
+        ])
+        switch WebEval.classify(reply) {
+        case let .threw(message):
+            throw GhostHandsError.cdpTransport(reason: message)
+        case let .value(value):
+            return WebEvalResult(app: target.name, value: value, port: debugPort)
+        }
+    }
+}
