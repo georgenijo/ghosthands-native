@@ -127,6 +127,28 @@ public enum WebDigest {
     /// RELATIVE to the page (the AXWebArea root is depth 0's parent; its first
     /// kept descendants are depth 0). Nesting among kept nodes is preserved so a
     /// list inside a nav inside the page reads as a tree, not a flat dump.
+    /// Interactive-control STATE surfaced inline by `web read` (issue #8) so a
+    /// checkbox/radio/select toggle is verifiable in ONE read — no `web eval`. Only
+    /// the CDP read populates it (the JS probe reads the live DOM state); the AX
+    /// path leaves it nil. Each field is OPTIONAL and rendered only when present, so
+    /// a control that has no such state stays clean.
+    public struct ControlState: Sendable, Equatable {
+        /// A checkbox/radio's checked state (nil for non-checkable controls).
+        public var checked: Bool?
+        /// A `<select>`'s currently-chosen option text (nil when not a select).
+        public var selected: String?
+        /// `aria-expanded` for a combobox/disclosure (nil when not exposed).
+        public var expanded: Bool?
+        public init(checked: Bool? = nil, selected: String? = nil, expanded: Bool? = nil) {
+            self.checked = checked
+            self.selected = selected
+            self.expanded = expanded
+        }
+        /// True iff this carries any real state — used by the digest keep rule so a
+        /// stateful-but-unlabeled control (a bare checkbox) is NOT dropped as noise.
+        public var hasSignal: Bool { checked != nil || selected != nil || expanded != nil }
+    }
+
     public struct Entry: Sendable, Equatable {
         public var facts: ElementFacts
         public var depth: Int
@@ -138,10 +160,15 @@ public enum WebDigest {
         /// the `data-gh-ref` attribute the read wrote; a navigation/re-render that
         /// removes that attribute makes the ref REFUSE ("stale ref") at action time.
         public var ref: String?
-        public init(facts: ElementFacts, depth: Int, ref: String? = nil) {
+        /// Inline form-control state (issue #8) — nil for non-form entries and the
+        /// AX read path; populated only by the CDP read from the live DOM.
+        public var state: ControlState?
+        public init(facts: ElementFacts, depth: Int, ref: String? = nil,
+                    state: ControlState? = nil) {
             self.facts = facts
             self.depth = depth
             self.ref = ref
+            self.state = state
         }
     }
 
@@ -196,6 +223,16 @@ public enum WebDigest {
         }
         if let value = entry.facts.value, !value.isEmpty, name != value {
             parts.append("value=\(value.debugDescription)")
+        }
+        // Inline form-control STATE (issue #8): each token shown only when present,
+        // so a checkbox reads `checked=true`, a select `selected="United States"`, a
+        // disclosure `expanded=false` — verifiable in one read, no `web eval`.
+        if let st = entry.state {
+            if let checked = st.checked { parts.append("checked=\(checked)") }
+            if let selected = st.selected, !selected.isEmpty {
+                parts.append("selected=\(selected.debugDescription)")
+            }
+            if let expanded = st.expanded { parts.append("expanded=\(expanded)") }
         }
         if entry.facts.enabled == false { parts.append("(disabled)") }
         // WHERE — only ACTIONABLE controls carry coordinates. The point of the
@@ -366,15 +403,39 @@ public enum CDPDigest {
       for (const el of document.querySelectorAll(wanted.join(','))) {
         const r = el.getBoundingClientRect();
         const tag = el.tagName.toLowerCase();
-        const role = el.getAttribute('role') || tag;
-        const name = (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 200);
+        const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+        // Role: an explicit aria role wins; else the tag — but an <input> is
+        // refined by its type so a checkbox/radio reads as one (not a text field).
+        let role = el.getAttribute('role');
+        if (!role) {
+          role = (tag === 'input')
+            ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
+            : tag;
+        }
+        const name = (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 200);
         // Stamp a shared ref on INTERACTIVE elements only (headings are read for
         // context, never clicked). The attribute IS the persistent ref store: it
         // lives in the browser's DOM across separate CLI processes, and its
         // absence after a nav/re-render is the honest staleness signal.
         let ref = '';
         if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
-        out.push({ ref, role, name, value: (el.value || '').slice(0, 200),
+        // Form-control STATE (issue #8). A checkbox/radio's signal is `checked`,
+        // NOT its meaningless default value "on" — so we emit checked and leave
+        // value empty for those. A <select> reports its chosen option's text.
+        let value = '', checked = null, selected = null, expanded = null;
+        if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+          checked = !!el.checked;
+        } else if (tag === 'select') {
+          const o = el.options && el.options[el.selectedIndex];
+          selected = o ? (o.text || o.value || '') : '';
+          value = (el.value || '').slice(0, 200);
+        } else {
+          value = (el.value || '').slice(0, 200);
+        }
+        const axExp = el.getAttribute && el.getAttribute('aria-expanded');
+        if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
+        const disabled = !!el.disabled;
+        out.push({ ref, role, name, value, checked, selected, expanded, disabled,
                    x: r.x, y: r.y, w: r.width, h: r.height });
       }
       return out;
@@ -408,14 +469,24 @@ public enum CDPDigest {
             let role = axRole(for: rawRole)
             let name = (row["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             let value = (row["value"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            // Drop a node with no name AND no value — it carries no signal.
-            if name == nil && value == nil { continue }
+            // Form-control state (issue #8) — checked/selected/expanded, plus
+            // disabled folded into `enabled` so the existing "(disabled)" renders.
+            let state = WebDigest.ControlState(
+                checked: WebActuate.optBool(row["checked"]),
+                selected: (row["selected"] as? String).flatMap { $0.isEmpty ? nil : $0 },
+                expanded: WebActuate.optBool(row["expanded"]))
+            // Drop a node with no name, no value, AND no meaningful state — a
+            // stateful-but-unlabeled control (a bare checkbox) is KEPT, not noise.
+            if name == nil && value == nil && !state.hasSignal { continue }
             let frame = boundingBox(row)
-            let facts = ElementFacts(role: role, title: name, value: value, frame: frame)
+            let disabled = WebActuate.boolValue(row["disabled"])
+            let facts = ElementFacts(role: role, title: name, value: value,
+                                     enabled: disabled ? false : nil, frame: frame)
             // The read stamped a bare id ("e5") on interactive elements; surface it
             // as the `@e5` handle the digest prints and `web click/fill` accepts.
             let ref = (row["ref"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
-            out.append(WebDigest.Entry(facts: facts, depth: 0, ref: ref))
+            out.append(WebDigest.Entry(facts: facts, depth: 0, ref: ref,
+                                       state: state.hasSignal ? state : nil))
         }
         return out
     }

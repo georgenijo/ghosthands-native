@@ -230,6 +230,17 @@ public enum WebActuate {
         return false
     }
 
+    /// Coerce a CDP `returnByValue` boolean that may be ABSENT or JS `null` into a
+    /// `Bool?` — distinguishing "no such state" (nil: missing key or `NSNull`) from
+    /// an actual `false`. Used by `web read`'s form-state surfacing (#8) so a
+    /// checkbox reports `checked=false` while a non-checkable control reports nothing.
+    static func optBool(_ any: Any?) -> Bool? {
+        guard let any, !(any is NSNull) else { return nil }
+        if let b = any as? Bool { return b }
+        if let n = any as? NSNumber { return n.boolValue }
+        return nil
+    }
+
     /// Coerce a CDP `returnByValue` number into a `Double`, or nil when absent /
     /// non-numeric — so a missing geometry field is honest "no box", never 0.
     static func doubleValue(_ any: Any?) -> Double? {

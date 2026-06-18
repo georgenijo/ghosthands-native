@@ -92,7 +92,7 @@ P0 closes ~80% of the gap. All keep the honesty contract (verify-or-refuse).
 | [#7](https://github.com/georgenijo/ghosthands-native/issues/7) | shared `@ref` addressing (+ see-the-words backup) | **P0** ✅ | **shipped** (ref primary; see-the-words backup = scheduled tail) — look and click share numbered handles |
 | [#9](https://github.com/georgenijo/ghosthands-native/issues/9) | managed throwaway session (`web open --headed`/`web close`) | **P0** ✅ | **shipped** — one command, auto-port, ready-wait; later verbs auto-target it (no --debug-port) |
 | [#10](https://github.com/georgenijo/ghosthands-native/issues/10) | page-side waits (`web wait --text/--url/--selector/--load`) | **P0** ✅ | **shipped** — nav+content flow sequenced with `web wait` alone; timeout REFUSES like AX `wait` |
-| [#8](https://github.com/georgenijo/ghosthands-native/issues/8) | form-control state in `web read` (`checked`/`selected`/`value`) | P1 | verify a toggle in one read, no `web eval` |
+| [#8](https://github.com/georgenijo/ghosthands-native/issues/8) | form-control state in `web read` (`checked`/`selected`/`value`) | P1 ✅ | **shipped** — checked/selected/expanded/disabled inline; verify a toggle in one read |
 | [#11](https://github.com/georgenijo/ghosthands-native/issues/11) | no-JS extraction (`web text/attr/count` + scoped read) | P1 | routine reads without `eval` |
 
 Already filed from the first (ghosthands-only) stress test — keep, don't dupe:

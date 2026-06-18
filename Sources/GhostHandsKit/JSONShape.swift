@@ -284,6 +284,12 @@ extension JSONResult {
             // Surface the `@eN` ref explicitly so a machine consumer can address by
             // it without re-parsing the rendered line (omitted when there is none).
             if let ref = e.ref { fields.append(("ref", .string(ref))) }
+            // Form-control state (#8) as discrete fields — each present only when set.
+            if let st = e.state {
+                if let checked = st.checked { fields.append(("checked", .bool(checked))) }
+                if let selected = st.selected { fields.append(("selected", .string(selected))) }
+                if let expanded = st.expanded { fields.append(("expanded", .bool(expanded))) }
+            }
             return GHJSONValue.object(fields)
         })
         return JSONResult(

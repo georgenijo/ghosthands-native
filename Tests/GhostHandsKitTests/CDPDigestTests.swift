@@ -83,6 +83,70 @@ final class CDPDigestTests: XCTestCase {
                        "@e7 AXButton \"Search\" @(412,240 86×32)")
     }
 
+    // MARK: - Issue #8 — form-control state surfaced inline
+
+    /// A checkbox/radio carries `checked` (true/false), and the row is KEPT even
+    /// with no label/value — its state IS the signal. The line renders `checked=…`.
+    func testCheckboxStateKeptAndRendered() {
+        let rows: [[String: Any]] = [
+            ["ref": "e1", "role": "checkbox", "name": "", "value": "",
+             "checked": true, "x": 0.0, "y": 0.0, "w": 16.0, "h": 16.0],
+            ["ref": "e2", "role": "radio", "name": "", "value": "",
+             "checked": false, "x": 0.0, "y": 0.0, "w": 16.0, "h": 16.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries.count, 2)                 // unlabeled but KEPT (state signal)
+        XCTAssertEqual(entries[0].facts.role, "AXCheckBox")
+        XCTAssertEqual(entries[0].state?.checked, true)
+        XCTAssertTrue(WebDigest.line(entries[0]).contains("checked=true"))
+        XCTAssertEqual(entries[1].facts.role, "AXRadioButton")
+        XCTAssertTrue(WebDigest.line(entries[1]).contains("checked=false"))
+    }
+
+    /// A `<select>` reports its chosen option text as `selected="…"`; a disclosure
+    /// reports `expanded=…`; a disabled control flags `(disabled)`.
+    func testSelectExpandedAndDisabledStates() {
+        let rows: [[String: Any]] = [
+            ["ref": "e1", "role": "select", "name": "Country", "value": "us",
+             "selected": "United States", "x": 0.0, "y": 0.0, "w": 120.0, "h": 24.0],
+            ["ref": "e2", "role": "button", "name": "Menu",
+             "expanded": false, "x": 0.0, "y": 0.0, "w": 40.0, "h": 24.0],
+            ["ref": "e3", "role": "button", "name": "Submit", "disabled": true,
+             "x": 0.0, "y": 0.0, "w": 50.0, "h": 24.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries[0].state?.selected, "United States")
+        XCTAssertTrue(WebDigest.line(entries[0]).contains("selected=\"United States\""))
+        XCTAssertEqual(entries[1].state?.expanded, false)
+        XCTAssertTrue(WebDigest.line(entries[1]).contains("expanded=false"))
+        XCTAssertEqual(entries[2].facts.enabled, false)
+        XCTAssertTrue(WebDigest.line(entries[2]).contains("(disabled)"))
+    }
+
+    /// A plain control with NO state has a nil `state` and renders no state tokens —
+    /// the state surfacing is purely additive (no `checked=`/`selected=` noise).
+    func testNoStateRowsStayClean() {
+        let rows: [[String: Any]] = [
+            ["ref": "e1", "role": "a", "name": "Home",
+             "x": 0.0, "y": 0.0, "w": 40.0, "h": 18.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertNil(entries[0].state)
+        let line = WebDigest.line(entries[0])
+        XCTAssertFalse(line.contains("checked"))
+        XCTAssertFalse(line.contains("selected"))
+        XCTAssertFalse(line.contains("expanded"))
+    }
+
+    /// `optBool` distinguishes a real `false` from an absent/null field — so a
+    /// checkbox shows `checked=false` while a non-checkable control shows nothing.
+    func testOptBoolDistinguishesFalseFromAbsent() {
+        XCTAssertEqual(WebActuate.optBool(false), false)
+        XCTAssertEqual(WebActuate.optBool(true), true)
+        XCTAssertNil(WebActuate.optBool(nil))
+        XCTAssertNil(WebActuate.optBool(NSNull()))
+    }
+
     /// The browser-surface routing hint: a browser bundle id probes CDP; a native
     /// app (or nil bundle) never does.
     func testIsBrowserSurfaceHint() {
