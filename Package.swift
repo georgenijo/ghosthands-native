@@ -14,6 +14,7 @@ let package = Package(
     ],
     products: [
         .executable(name: "ghosthands", targets: ["ghosthands"]),
+        .executable(name: "ghosthands-mcp", targets: ["ghosthands-mcp"]),
         .library(name: "GhostHandsKit", targets: ["GhostHandsKit"]),
     ],
     dependencies: [
@@ -39,6 +40,15 @@ let package = Package(
             name: "ghosthands",
             dependencies: ["GhostHandsKit"],
             path: "Sources/ghosthands"),
+
+        // The MCP server: exposes the same verbs over MCP-over-stdio (JSON-RPC
+        // 2.0, newline-delimited) so any external brain can drive the Mac. No
+        // MCP SDK dep — JSON-RPC is hand-rolled with Foundation. ScreenCaptureKit
+        // reaches this exe transitively through GhostHandsKit.
+        .executableTarget(
+            name: "ghosthands-mcp",
+            dependencies: ["GhostHandsKit"],
+            path: "Sources/ghosthands-mcp"),
 
         // Hermetic unit tests — no live app driving.
         .testTarget(
