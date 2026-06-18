@@ -386,6 +386,9 @@ struct GhostHandsCLI {
         case "fill": await runWebFill(tail)
         case "html": await runWebHtml(tail)
         case "eval": await runWebEval(tail)
+        case "text": await runWebText(tail)
+        case "attr": await runWebAttr(tail)
+        case "count": await runWebCount(tail)
         default: usage()
         }
     }
@@ -424,6 +427,23 @@ struct GhostHandsCLI {
             }
         }
         return (lens, port, relaunch, positional)
+    }
+
+    /// Extract a `<flag> <value>` pair from `args`, returning the value (nil if the
+    /// flag is absent) and the remaining args with that pair removed. Used for
+    /// `web read --in <css>` so the scope value isn't mistaken for a positional.
+    static func extractFlagValue(_ flag: String, from args: [String]) -> (String?, [String]) {
+        var value: String?
+        var rest: [String] = []
+        var i = 0
+        while i < args.count {
+            if args[i] == flag, i + 1 < args.count {
+                value = args[i + 1]; i += 2
+            } else {
+                rest.append(args[i]); i += 1
+            }
+        }
+        return (value, rest)
     }
 
     // MARK: - web open / web close (managed throwaway session)
@@ -470,6 +490,99 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("web close")
         }
+    }
+
+    // MARK: - web text / web attr / web count (no-JS extraction, CDP)
+
+    /// Resolve effective port + browser for an extraction verb, plus the `--all`
+    /// flag (filtered out of the positionals). Mirrors the selector-verb wiring.
+    static func parseExtract(_ rest: [String])
+        -> (lens: WebLens, port: Int, relaunch: Bool, all: Bool, positional: [String], session: WebSessionInfo?) {
+        let (lens, parsedPort, relaunch, raw) = parseWebLens(scanJSON(rest))
+        let all = raw.contains("--all")
+        let positional = raw.filter { $0 != "--all" }
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        return (lens, port, relaunch, all, positional, session)
+    }
+
+    @MainActor
+    static func runWebText(_ rest: [String]) async {
+        // web text <css> [browser] [--all]
+        let p = parseExtract(rest)
+        guard let selector = p.positional.first else { usage() }
+        let explicitBrowser = p.positional.count >= 2 ? p.positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: p.session) else { usage() }
+        do {
+            let r = try await GhostHands.webText(
+                selector: selector, all: p.all, browser: browser, lens: p.lens,
+                debugPort: p.port, relaunch: p.relaunch)
+            emitExtract(r)
+        } catch let error as GhostHandsError { failWebActuate("web text", error) }
+        catch { failUnexpected("web text") }
+    }
+
+    @MainActor
+    static func runWebAttr(_ rest: [String]) async {
+        // web attr <css> <name> [browser] [--all]
+        let p = parseExtract(rest)
+        guard p.positional.count >= 2 else { usage() }
+        let selector = p.positional[0]
+        let name = p.positional[1]
+        let explicitBrowser = p.positional.count >= 3 ? p.positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: p.session) else { usage() }
+        do {
+            let r = try await GhostHands.webAttr(
+                selector: selector, name: name, all: p.all, browser: browser,
+                lens: p.lens, debugPort: p.port, relaunch: p.relaunch)
+            emitExtract(r)
+        } catch let error as GhostHandsError { failWebActuate("web attr", error) }
+        catch { failUnexpected("web attr") }
+    }
+
+    @MainActor
+    static func runWebCount(_ rest: [String]) async {
+        // web count <css> [browser]
+        let p = parseExtract(rest)
+        guard let selector = p.positional.first else { usage() }
+        let explicitBrowser = p.positional.count >= 2 ? p.positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: p.session) else { usage() }
+        do {
+            let r = try await GhostHands.webCount(
+                selector: selector, browser: browser, lens: p.lens,
+                debugPort: p.port, relaunch: p.relaunch)
+            if jsonMode { JSONResult.fromWebCount(r).emit() }
+            else {
+                print(r.count)
+                let note = "— \(r.count) match\(r.count == 1 ? "" : "es") for "
+                    + "\(r.selector.debugDescription) in \(r.app) "
+                    + "(via CDP, port \(r.port))\n"
+                FileHandle.standardError.write(Data(note.utf8))
+            }
+        } catch let error as GhostHandsError { failWebActuate("web count", error) }
+        catch { failUnexpected("web count") }
+    }
+
+    /// Print a text/attr extraction. Without `--all`, the FIRST match (the common
+    /// single-element read); with `--all`, one value per line. A footer names how
+    /// many matched + the lens. Honest: a `nil` attr value prints as an empty line.
+    @MainActor
+    static func emitExtract(_ r: GhostHands.WebExtractResult) {
+        if jsonMode { JSONResult.fromWebExtract(r).emit(); return }
+        let rendered = r.values.map { $0 ?? "" }
+        if r.all {
+            for v in rendered { print(v) }
+        } else if let first = rendered.first {
+            print(first)
+        }
+        let n = r.values.count
+        let note = "— \(n) match\(n == 1 ? "" : "es") for \(r.selector.debugDescription) in "
+            + "\(r.app)\(r.all ? "" : " (first; --all for every match)") "
+            + "(via CDP, port \(r.port))\n"
+        FileHandle.standardError.write(Data(note.utf8))
     }
 
     // MARK: - web wait (page-side condition waits, CDP)
@@ -564,14 +677,25 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebRead(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // Pre-extract `--in <css>` (scope the digest to a container, issue #11)
+        // before the lens scan so its value isn't mistaken for the browser arg.
+        let (scope, afterScope) = extractFlagValue("--in", from: scanJSON(rest))
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterScope)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
         guard let browser = WebSession.effectiveBrowser(
             explicit: positional.first, session: session) else { usage() }
         do {
-            let (result, served) = try await GhostHands.webRead(
-                browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
+            let (result, served): (GhostHands.WebReadResult, GhostHands.ServedLens)
+            if let scope {
+                // Scoped read is CDP-only (a CSS scope has no AX equivalent).
+                (result, served) = try await GhostHands.webReadScoped(
+                    selector: scope, browser: browser, lens: lens,
+                    debugPort: port, relaunch: relaunch)
+            } else {
+                (result, served) = try await GhostHands.webRead(
+                    browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
+            }
             if jsonMode {
                 JSONResult.fromWebRead(result, served: served).emit()
                 return
@@ -1917,6 +2041,10 @@ struct GhostHandsCLI {
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
+          ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)
+          ghosthands web attr "<@eN|css>" <name> [browser] [--all]                   an attribute of the matched element(s) — no eval
+          ghosthands web count "<css>" [browser]                                     number of elements the selector matches (0 is honest)
+          ghosthands web read --in "<css>" [browser]                                 scope the page digest to a container (CDP-only)
           (--relaunch: opt-in. When the debug port is CLOSED, launch a NEW, ISOLATED throwaway browser
            instance — ephemeral OS-chosen port + a fresh temp profile (never your real cookies/history).
            Without it, a closed port still refuses. Never relaunches silently, never touches your profile.)
@@ -1992,6 +2120,10 @@ struct GhostHandsCLI {
           ghosthands web fill "input[name=q]" "swift" Chrome
           ghosthands web html "#submit" Brave
           ghosthands web eval "document.title" Chrome
+          ghosthands web text ".titleline > a" --all      # every HN headline, no eval
+          ghosthands web attr ".titleline > a" href --all  # …and their links
+          ghosthands web count ".athing"                  # how many stories on the page
+          ghosthands web read --in "#hnmain"              # digest scoped to a container
           ghosthands navigate "example.com" Brave
           ghosthands navigate "https://docs.swift.org/"
           ghosthands windows Finder

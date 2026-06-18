@@ -150,8 +150,15 @@ networkidle uses an honest page-side quiet-network heuristic (readyState complet
 Live-verified: a full example.com→iana navigation + content-appearance flow
 sequenced with `web wait` alone — no `curl`, no `web eval` poll loops.
 
-**All three P0s (#7 + #9 + #10) shipped green.** Remaining (P1): #8 → #11, then the
-#7 see-the-words backup.
+**All three P0s (#7 + #9 + #10) shipped green.**
+
+**#8 ✅ shipped** — `web read` surfaces form-control state inline
+(`checked`/`selected`/`expanded`/`(disabled)`), so a toggle is verifiable in one
+read; a stateful-but-unlabeled control is kept, not dropped. **#11 ✅ shipped** —
+no-JS extraction verbs `web text`/`web attr`/`web count` (`--all` for every match)
++ scoped `web read --in <css>`; invalid/no-match REFUSES, `count` of nothing is an
+honest 0. Live-verified extracting HN top-5 (titles + points + links) with no
+`web eval`. Remaining: the #7 see-the-words find backup (scheduled tail).
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the

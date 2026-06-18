@@ -300,6 +300,22 @@ extension JSONResult {
                      ("entries", entries)])
     }
 
+    public static func fromWebExtract(_ r: GhostHands.WebExtractResult) -> JSONResult {
+        // Each value is a string, or null for an absent attribute (honest "not set").
+        let values = GHJSONValue.array(r.values.map { $0.map(GHJSONValue.string) ?? .null })
+        return JSONResult(
+            verb: "web \(r.verb)", status: .ok, app: r.app, target: r.selector,
+            fields: [("port", .int(r.port)),
+                     ("all", .bool(r.all)),
+                     ("count", .int(r.values.count)),
+                     ("values", values)])
+    }
+
+    public static func fromWebCount(_ r: GhostHands.WebCountResult) -> JSONResult {
+        JSONResult(verb: "web count", status: .ok, app: r.app, target: r.selector,
+                   fields: [("port", .int(r.port)), ("count", .int(r.count))])
+    }
+
     public static func fromWebOpen(_ info: WebSessionInfo) -> JSONResult {
         JSONResult(
             verb: "web open", status: .ok, app: info.browser, target: info.url,

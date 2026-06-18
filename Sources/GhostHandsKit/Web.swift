@@ -442,6 +442,59 @@ public enum CDPDigest {
     })()
     """
 
+    /// The SCOPED digest expression (`web read --in <css>`, issue #11): the same
+    /// per-element collection as `evaluateExpression`, but rooted at the first
+    /// element matching `container` instead of the whole document. Returns
+    /// `{ found, rows }` so the caller can REFUSE honestly when the container
+    /// selector matches nothing (vs an honest empty digest for a present-but-empty
+    /// container). Refs are still stamped (so you can click within the scope).
+    public static func scopedEvaluateExpression(container: String) -> String {
+        let sel = WebActuate.jsonStringLiteral(container)
+        return """
+        (() => {
+          let root;
+          try { root = document.querySelector(\(sel)); } catch (e) { root = null; }
+          if (!root) return { found: false };
+          for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
+          const out = [];
+          const interactive = ['a','button','input','select','textarea'];
+          const text = ['h1','h2','h3','h4','h5','h6'];
+          const wanted = interactive.concat(text);
+          let n = 0;
+          for (const el of root.querySelectorAll(wanted.join(','))) {
+            const r = el.getBoundingClientRect();
+            const tag = el.tagName.toLowerCase();
+            const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+            let role = el.getAttribute('role');
+            if (!role) {
+              role = (tag === 'input')
+                ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
+                : tag;
+            }
+            const name = (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 200);
+            let ref = '';
+            if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
+            let value = '', checked = null, selected = null, expanded = null;
+            if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+              checked = !!el.checked;
+            } else if (tag === 'select') {
+              const o = el.options && el.options[el.selectedIndex];
+              selected = o ? (o.text || o.value || '') : '';
+              value = (el.value || '').slice(0, 200);
+            } else {
+              value = (el.value || '').slice(0, 200);
+            }
+            const axExp = el.getAttribute && el.getAttribute('aria-expanded');
+            if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
+            const disabled = !!el.disabled;
+            out.push({ ref, role, name, value, checked, selected, expanded, disabled,
+                       x: r.x, y: r.y, w: r.width, h: r.height });
+          }
+          return { found: true, rows: out };
+        })()
+        """
+    }
+
     /// Map one tag/role string to the AX-ish role the existing digest renders
     /// (so a CDP line reads like an AX line). Unknown tags pass through verbatim.
     public static func axRole(for role: String) -> String {
@@ -815,6 +868,29 @@ extension GhostHands {
         // A reachable CDP page IS a web surface (hasWebArea = true), so the CLI
         // footer reports element count rather than "no page".
         return WebReadResult(app: target.name, entries: entries, hasWebArea: true)
+    }
+
+    /// `web read --in <css>` (issue #11) — the page digest SCOPED to a container.
+    /// CDP-only (a CSS scope has no AX equivalent): a `--ax` lens REFUSES via
+    /// `resolveForSelectorVerb`. The container selector matching NOTHING REFUSES
+    /// (`selectorNotFound`) — distinct from a present-but-empty container, which is
+    /// an honest empty digest.
+    @MainActor
+    public static func webReadScoped(selector: String, browser: String, lens: WebLens,
+                                     debugPort: Int = 9222, relaunch: Bool = false)
+        async throws -> (result: WebReadResult, served: ServedLens) {
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
+        let reply = try await evaluateObject(
+            session, CDPDigest.scopedEvaluateExpression(container: selector))
+        guard WebActuate.boolValue(reply["found"]) else {
+            throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
+        }
+        let rows = (reply["rows"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        let result = WebReadResult(app: target.name, entries: entries, hasWebArea: true)
+        return (result, .cdp(port: port))
     }
 
     /// Pull the `[[String:Any]]` array out of a `Runtime.evaluate` reply's
