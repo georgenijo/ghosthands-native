@@ -318,12 +318,14 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runClickAt(_ rest: [String]) async {
-        guard rest.count >= 3 else { usage() }
-        guard let x = Double(rest[0]) else { failBadCoord("click-at", rest[0]) }
-        guard let y = Double(rest[1]) else { failBadCoord("click-at", rest[1]) }
-        let appSpec = rest[2]
+        // `--visible` may appear in any order; the rest are positional x y app.
+        let (mode, pos) = PixelFlags.parse(rest)
+        guard pos.count >= 3 else { usage() }
+        guard let x = Double(pos[0]) else { failBadCoord("click-at", pos[0]) }
+        guard let y = Double(pos[1]) else { failBadCoord("click-at", pos[1]) }
+        let appSpec = pos[2]
         do {
-            let outcome = try await GhostHands.clickAt(x: x, y: y, appSpec: appSpec)
+            let outcome = try await GhostHands.clickAt(x: x, y: y, appSpec: appSpec, mode: mode)
             print(reportPixel(outcome))
         } catch let error as GhostHandsError {
             fail("click-at", error)
@@ -336,15 +338,17 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runDrag(_ rest: [String]) async {
-        guard rest.count >= 5 else { usage() }
-        guard let x1 = Double(rest[0]) else { failBadCoord("drag", rest[0]) }
-        guard let y1 = Double(rest[1]) else { failBadCoord("drag", rest[1]) }
-        guard let x2 = Double(rest[2]) else { failBadCoord("drag", rest[2]) }
-        guard let y2 = Double(rest[3]) else { failBadCoord("drag", rest[3]) }
-        let appSpec = rest[4]
+        // `--visible` may appear in any order; the rest are positional x1 y1 x2 y2 app.
+        let (mode, pos) = PixelFlags.parse(rest)
+        guard pos.count >= 5 else { usage() }
+        guard let x1 = Double(pos[0]) else { failBadCoord("drag", pos[0]) }
+        guard let y1 = Double(pos[1]) else { failBadCoord("drag", pos[1]) }
+        guard let x2 = Double(pos[2]) else { failBadCoord("drag", pos[2]) }
+        guard let y2 = Double(pos[3]) else { failBadCoord("drag", pos[3]) }
+        let appSpec = pos[4]
         do {
             let outcome = try await GhostHands.drag(x1: x1, y1: y1, x2: x2, y2: y2,
-                                                    appSpec: appSpec)
+                                                    appSpec: appSpec, mode: mode)
             print(reportPixel(outcome))
         } catch let error as GhostHandsError {
             fail("drag", error)
@@ -359,16 +363,26 @@ struct GhostHandsCLI {
     /// claim. Pixel mode is more visible / less guaranteed than the AX verbs.
     static func reportPixel(_ o: PixelOutcome) -> String {
         let at = "(\(Int(o.x)),\(Int(o.y)))"
+        // Label the visible HID exception so a moved cursor / focus steal is never
+        // silent; the default invisible path adds nothing. The label also flags the
+        // diff-vs-actuation split: the verdict diffs the TARGET app's AX-frontmost
+        // window, but the HID click lands on whatever window is SCREEN-frontmost
+        // under the point — so when windows overlap the two can differ, and the
+        // verdict reflects the TARGET window's repaint, not proof the HID landed on
+        // it. That only ever UNDER-claims (never a false verified), but say it.
+        let tag = o.mode == .visible
+            ? " [visible HID — cursor moved; diffs target window, HID hits screen-front window under point]"
+            : ""
         if o.verified {
             let pct = String(format: "%.1f%%", o.changedFraction * 100)
-            return "\(o.verb) \(at) in \(o.app) — verified: pixel diff at \(at): "
+            return "\(o.verb) \(at) in \(o.app)\(tag) — verified: pixel diff at \(at): "
                 + "\(pct) of region changed"
         }
         if !o.observable {
-            return "\(o.verb) \(at) in \(o.app) — event dispatched; could not observe "
+            return "\(o.verb) \(at) in \(o.app)\(tag) — event dispatched; could not observe "
                 + "(Screen Recording not granted — effect unverified)"
         }
-        return "\(o.verb) \(at) in \(o.app) — event dispatched; no observable pixel "
+        return "\(o.verb) \(at) in \(o.app)\(tag) — event dispatched; no observable pixel "
             + "change (effect unverified)"
     }
 
@@ -499,8 +513,8 @@ struct GhostHandsCLI {
           ghosthands web tabs <browser>               list open tabs (* = selected); refuses if not exposed
           ghosthands find "<name>" <app>              does a named element exist? (exit 0/1)
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
-          ghosthands click-at <x> <y> <app>           left click at a GLOBAL screen point (pixel, verify-by-diff)
-          ghosthands drag <x1> <y1> <x2> <y2> <app>   press-move-release between two GLOBAL points (pixel)
+          ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
+          ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
           ghosthands version
@@ -536,12 +550,31 @@ struct GhostHandsCLI {
         shot writes a file ONLY for real captured pixels — it refuses (no file) when
         Screen Recording is not granted, never a black PNG.
           - click-at / drag are the PIXEL tier (no AX element; coords from the caller).
-            They post the mouse events straight to the app's pid (cursor-less,
-            background-capable) and VERIFY by a screenshot diff of the click
-            neighborhood: VERIFIED only on an observed pixel change; otherwise the
-            event is dispatched-unverified (NEVER success), and they REFUSE a point
-            outside the target window. Pixel mode is MORE visible / less guaranteed
-            than the AX verbs — prefer click/act when an AX element exists.
+            They VERIFY by a screenshot diff of the click neighborhood: VERIFIED only
+            on an observed pixel change; otherwise the event is dispatched-unverified
+            (NEVER success), and they REFUSE a point outside the target window. Two
+            delivery modes (the INVISIBILITY axis):
+              default (invisible best-effort): post the mouse events straight to the
+                app's pid (CGEventPostToPid) — cursor-less, no warp, background-capable.
+                But postToPid is coordinate-only (no OS hit-test), so a backgrounded
+                or non-key AppKit window — and some non-AppKit / game surfaces — may
+                IGNORE it (dispatched-unverified). It does NOT actuate a window that
+                only responds to a real OS click.
+              --visible (LABELLED exception): warp the REAL cursor to the point and
+                post a real HID click via the .cghidEventTap, so the WindowServer
+                hit-tests and ACTUATES the window under the point (the path that lands
+                a backgrounded AppKit window postToPid could not reach). It MOVES /
+                flickers the visible cursor, and macOS routes the HID mouse to whatever
+                window is FRONTMOST under the point (an OS wall) — so --visible is NOT
+                invisible, may FOREGROUND / steal focus, and cannot click a truly
+                background window without raising it. The cursor is saved and restored.
+                One more honesty caveat: the diff measures the TARGET app's AX-frontmost
+                window, but the HID lands on whatever window is SCREEN-frontmost under
+                the point — when windows OVERLAP these can differ, so a verified /
+                unverified verdict reflects the TARGET window's repaint, not proof the
+                HID landed on it (this only ever under-claims, never a false verified).
+            Pixel mode is MORE visible / less guaranteed than the AX verbs — prefer
+            click/act when an AX element exists.
         """
         FileHandle.standardError.write(Data((text + "\n").utf8))
         exit(2)

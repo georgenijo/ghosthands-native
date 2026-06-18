@@ -154,6 +154,50 @@ public struct PixelRegion: Sendable, Equatable {
     }
 }
 
+/// The PURE drag-path interpolation. Given two endpoints and a step count, return
+/// the INTERMEDIATE points (exclusive of both endpoints — the down lands on
+/// `start`, the up on `end`) so a drag target sees a continuous move rather than a
+/// jump. Free of CGEvent / warp / capture so the geometry is unit-testable.
+public enum PixelPath {
+    /// `steps` is the number of equal segments between the endpoints; the result
+    /// has `steps - 1` interior points at t = 1/steps … (steps-1)/steps. A `steps`
+    /// of 0 or 1 yields no interior points (a single jump).
+    public static func interpolate(start: CGPoint, end: CGPoint, steps: Int) -> [CGPoint] {
+        guard steps > 1 else { return [] }
+        var points: [CGPoint] = []
+        points.reserveCapacity(steps - 1)
+        for i in 1..<steps {
+            let t = Double(i) / Double(steps)
+            points.append(CGPoint(x: start.x + (end.x - start.x) * t,
+                                  y: start.y + (end.y - start.y) * t))
+        }
+        return points
+    }
+}
+
+/// The PURE CLI flag parse for the pixel verbs (`click-at` / `drag`). Scans the
+/// raw arg list for `--visible`, selecting the delivery mode, and returns the
+/// REMAINING tokens in order as the positional coords/app — mirroring the
+/// in-any-order flag loops the other verbs use. Pure (no IO) so flag/mode
+/// selection is unit-testable with no CLI run.
+public enum PixelFlags {
+    /// The `--visible` token toggles `.visible`; default (absent) is `.invisible`.
+    public static let visibleFlag = "--visible"
+
+    public static func parse(_ args: [String]) -> (mode: PixelMode, positional: [String]) {
+        var mode: PixelMode = .invisible
+        var positional: [String] = []
+        for arg in args {
+            if arg == visibleFlag {
+                mode = .visible
+            } else {
+                positional.append(arg)
+            }
+        }
+        return (mode, positional)
+    }
+}
+
 /// The PURE bounds gate, mirroring `Shot.decide`'s pattern: REFUSE to poke a
 /// point outside the target window (don't click a random place). A function of
 /// the global click point and the window's global frame, so it is unit-testable

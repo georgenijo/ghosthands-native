@@ -186,4 +186,79 @@ final class PixelVerdictTests: XCTestCase {
         XCTAssertTrue(o.verified)
         XCTAssertEqual(o.changedFraction, 0.42, accuracy: 0.0001)
     }
+
+    // MARK: --visible flag parse + mode selection (PURE, no HID/warp/capture)
+
+    func testFlagParseDefaultIsInvisible() {
+        // No flag ⇒ DEFAULT invisible best-effort; positionals untouched/ordered.
+        let (mode, pos) = PixelFlags.parse(["480", "300", "Calculator"])
+        XCTAssertEqual(mode, .invisible)
+        XCTAssertEqual(pos, ["480", "300", "Calculator"])
+    }
+
+    func testFlagParseVisibleToggles() {
+        // `--visible` present ⇒ visible mode; it is consumed from the positionals.
+        let (mode, pos) = PixelFlags.parse(["480", "300", "Calculator", "--visible"])
+        XCTAssertEqual(mode, .visible)
+        XCTAssertEqual(pos, ["480", "300", "Calculator"])
+    }
+
+    func testFlagParseVisibleInAnyOrderPreservesPositionalOrder() {
+        // The flag can sit anywhere; the remaining tokens keep their order so the
+        // arity guard + Double() parse still see x y app in sequence.
+        let (mode, pos) = PixelFlags.parse(["--visible", "100", "200", "400", "200", "Preview"])
+        XCTAssertEqual(mode, .visible)
+        XCTAssertEqual(pos, ["100", "200", "400", "200", "Preview"])
+    }
+
+    func testFlagParseLeavesNonFlagDashTokensAsPositional() {
+        // Only the exact `--visible` token is a flag; a negative coord stays positional.
+        let (mode, pos) = PixelFlags.parse(["-12", "300", "Calculator"])
+        XCTAssertEqual(mode, .invisible)
+        XCTAssertEqual(pos, ["-12", "300", "Calculator"])
+        // And the coords still parse after the (pure) flag scan.
+        XCTAssertEqual(Double(pos[0]), -12)
+    }
+
+    // MARK: drag-path interpolation geometry (PURE)
+
+    func testInterpolateReturnsInteriorPointsOnly() {
+        // steps=4 ⇒ 3 interior points at t = 1/4, 2/4, 3/4 (endpoints excluded).
+        let pts = PixelPath.interpolate(start: CGPoint(x: 0, y: 0),
+                                        end: CGPoint(x: 40, y: 80), steps: 4)
+        XCTAssertEqual(pts.count, 3)
+        XCTAssertEqual(pts[0].x, 10, accuracy: 0.0001); XCTAssertEqual(pts[0].y, 20, accuracy: 0.0001)
+        XCTAssertEqual(pts[1].x, 20, accuracy: 0.0001); XCTAssertEqual(pts[1].y, 40, accuracy: 0.0001)
+        XCTAssertEqual(pts[2].x, 30, accuracy: 0.0001); XCTAssertEqual(pts[2].y, 60, accuracy: 0.0001)
+    }
+
+    func testInterpolateStepCountMatchesDefaultDragSteps() {
+        // The live drag uses GhostHands.dragSteps; the interior count is steps-1.
+        let pts = PixelPath.interpolate(start: CGPoint(x: 0, y: 0),
+                                        end: CGPoint(x: 100, y: 0),
+                                        steps: GhostHands.dragSteps)
+        XCTAssertEqual(pts.count, GhostHands.dragSteps - 1)
+    }
+
+    func testInterpolateZeroOrOneStepHasNoInteriorPoints() {
+        // A single jump (steps <= 1) yields no intermediate moves.
+        XCTAssertEqual(PixelPath.interpolate(start: .zero, end: CGPoint(x: 9, y: 9), steps: 1).count, 0)
+        XCTAssertEqual(PixelPath.interpolate(start: .zero, end: CGPoint(x: 9, y: 9), steps: 0).count, 0)
+    }
+
+    // MARK: PixelOutcome mode label (default invisible, visible is opt-in)
+
+    func testOutcomeDefaultModeIsInvisible() {
+        let o = PixelOutcome(app: "Calc", verb: "click-at", x: 10, y: 20,
+                             dispatched: true, verified: false, observable: true,
+                             changedFraction: 0.0)
+        XCTAssertEqual(o.mode, .invisible)
+    }
+
+    func testOutcomeCarriesVisibleMode() {
+        let o = PixelOutcome(app: "Calc", verb: "click-at", x: 10, y: 20,
+                             dispatched: true, verified: true, observable: true,
+                             changedFraction: 0.42, mode: .visible)
+        XCTAssertEqual(o.mode, .visible)
+    }
 }
