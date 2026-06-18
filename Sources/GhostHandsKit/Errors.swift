@@ -45,6 +45,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// Capture was attempted (with permission) but produced no usable pixels —
     /// e.g. an off-screen/occluded window. Honest REFUSE, no blank PNG written.
     case captureFailed(reason: String)
+    /// A pixel poke (`click-at` / `drag`) targeted a global point that is NOT
+    /// inside the resolved app's frontmost window. We REFUSE rather than poke a
+    /// random screen location — a blind pixel mode has no element to vouch for
+    /// the point, so an out-of-bounds coordinate is almost certainly a mistake.
+    case pointOutsideWindow(point: String, window: String, app: String)
+    /// A pixel coordinate argument did not parse as a number.
+    case badCoordinate(String)
 
     public var description: String {
         switch self {
@@ -92,6 +99,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "no on-screen windows to capture in \(app)"
         case let .captureFailed(reason):
             return "screenshot capture failed: \(reason)"
+        case let .pointOutsideWindow(point, window, app):
+            return "point \(point) is outside \(app)'s window \(window) — refusing "
+                + "to poke a location that is not on the target window"
+        case let .badCoordinate(raw):
+            return "\(raw.debugDescription) is not a valid coordinate (expected a number)"
         }
     }
 }
