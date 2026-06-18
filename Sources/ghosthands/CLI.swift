@@ -48,6 +48,8 @@ struct GhostHandsCLI {
             await runClickAt(Array(args.dropFirst()))
         case "drag":
             await runDrag(Array(args.dropFirst()))
+        case "key":
+            runKey(Array(args.dropFirst()))
         case "install":
             await runInstall(Array(args.dropFirst()))
         case "replay":
@@ -549,6 +551,61 @@ struct GhostHandsCLI {
         fail(verb, .badCoordinate(raw))
     }
 
+    // MARK: - key
+
+    @MainActor
+    static func runKey(_ rest: [String]) {
+        // `--visible` may appear in any order (REUSE PixelFlags); the rest are
+        // positional: <spec> [app]. The app spec is OPTIONAL — with no app we post
+        // through the HID tap to the frontmost (focused) app.
+        let (mode, pos) = PixelFlags.parse(rest)
+        guard let spec = pos.first else { usage() }
+        let appSpec = pos.count >= 2 ? pos[1] : nil
+        do {
+            let outcome = try GhostHands.key(spec: spec, appSpec: appSpec, mode: mode)
+            print(reportKey(outcome))
+        } catch let error as GhostHandsError {
+            // An unknown key name is a USAGE error (exit 2), mirroring runAct's
+            // `.unknownAction` wiring; a bad spec is likewise a usage error.
+            if case .unknownKey = error {
+                FileHandle.standardError.write(Data("key failed: \(error)\n".utf8))
+                exit(2)
+            }
+            if case .badKeySpec = error {
+                FileHandle.standardError.write(Data("key failed: \(error)\n".utf8))
+                exit(2)
+            }
+            fail("key", error)
+        } catch {
+            failUnexpected("key")
+        }
+    }
+
+    /// Honest one-liner for a key dispatch — ALWAYS dispatched-unverified (a key
+    /// has no built-in observable; the effect lands wherever the app routes it).
+    /// Never claims VERIFIED. The `.visible` HID path is LABELLED so a focus steal
+    /// is never silent.
+    static func reportKey(_ o: KeyOutcome) -> String {
+        // Mirror reportPixel: keep the MECHANISM out of the base (it is never the
+        // same in both modes) and move it into the per-mode tag. The base only
+        // states the honest verdict — dispatched, effect unverified — which holds
+        // for both the per-pid post and the HID post.
+        let base = "posted \(o.spec.debugDescription) to \(o.app) — key event "
+            + "dispatched; effect unverified"
+        if o.mode == .visible {
+            // The labelled exception: posted through the HID tap to the FOCUSED
+            // app (the caller activated it first when there was one). Do NOT claim
+            // the invisible per-pid mechanism here.
+            return base + " [visible HID — posted via .cghidEventTap to the "
+                + "focused app, may steal focus]"
+        }
+        // DEFAULT invisible path: per-pid post; honest that macOS may not deliver
+        // a key to a non-focused / background app (the same OS wall the pixel
+        // per-pid post hits).
+        return base + " [invisible — CGEventPostToPid to the app's pid; macOS may "
+            + "not deliver to a non-focused / background app]"
+    }
+
     // MARK: - install
 
     @MainActor
@@ -730,6 +787,7 @@ struct GhostHandsCLI {
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
+          ghosthands key "<spec>" [app] [--visible]               post a keystroke/chord (e.g. return, cmd+s) — dispatched-unverified
           ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
           ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
@@ -754,6 +812,9 @@ struct GhostHandsCLI {
           ghosthands shot Calculator /tmp/calc.png
           ghosthands click-at 480 300 Calculator
           ghosthands drag 100 200 400 200 Preview
+          ghosthands key return Safari
+          ghosthands key "cmd+shift+t" Chrome
+          ghosthands key return                 (no app — posts to the frontmost app)
           ghosthands install ~/Downloads/Foo.dmg
           ghosthands install ~/Downloads/Foo.dmg --dest ~/Applications --force
           ghosthands record /tmp/login.json type "alice" "Username" Safari
@@ -810,6 +871,23 @@ struct GhostHandsCLI {
                 HID landed on it (this only ever under-claims, never a false verified).
             Pixel mode is MORE visible / less guaranteed than the AX verbs — prefer
             click/act when an AX element exists.
+          - key posts a keystroke/chord (the base key is the LAST '+'-token; earlier
+            tokens are modifiers cmd|shift|alt|ctrl). It REFUSES (exit 2) on an unknown
+            key name or a bad spec, BEFORE posting anything. A key event has NO built-in
+            observable (no AX value, and no caller-supplied point to screenshot-diff), so
+            it is ALWAYS dispatched-unverified in BOTH modes — like window raise, never a
+            faked verified. Two delivery modes (the INVISIBILITY axis):
+              default (invisible best-effort, REQUIRES an app): post the key straight to
+                the app's pid (CGEventPostToPid) — cursor-less, no focus steal,
+                background-capable. But postToPid is delivery-only: macOS may NOT route a
+                key to a non-focused / background app (the same OS wall the pixel postToPid
+                hits), so we NEVER promise background key delivery.
+              --visible (LABELLED exception): activate the app to take focus, then post a
+                real HID keystroke via the .cghidEventTap so the focused app receives it
+                like a real keypress (the path for when the invisible post does not land).
+                NOT invisible — may FOREGROUND / steal focus, and the key goes to whatever
+                app is focused (an OS wall). With NO app spec, key uses this HID path on
+                the FRONTMOST app (there is no pid to post to).
           - install mounts the DMG (hdiutil), finds the SINGLE top-level .app, and
             copies it with cp -R (no GUI drag — no cursor, no focus steal), then
             ALWAYS detaches the mount. It REFUSES (nothing copied) on a missing DMG,
