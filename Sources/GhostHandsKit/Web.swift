@@ -644,13 +644,16 @@ extension GhostHands {
     /// Slice 1's digest is flat (point-in-time, no nested refs).
     @MainActor
     static func webReadCDP(target: Target, port: Int) async throws -> WebReadResult {
-        guard let wsURL = try await CDPDiscovery.browserWebSocketURL(
-            port: port, app: target.name) else {
-            // The endpoint answered but advertised no browser socket — honest
-            // empty page rather than a fabricated digest.
+        // Connect to a PAGE target's OWN debugger socket, not the browser-level
+        // /json/version endpoint — the browser endpoint has no Runtime domain
+        // (it answers "Runtime.enable wasn't found"). Slice 1 reads the FIRST
+        // debuggable page target; per-tab selection (by url / index) is a later
+        // slice. Honest empty when the port lists no debuggable page.
+        let targets = try await CDPDiscovery.list(port: port, app: target.name)
+        guard let page = targets.first(where: { !$0.webSocketDebuggerUrl.isEmpty }) else {
             return WebReadResult(app: target.name, entries: [], hasWebArea: false)
         }
-        let session = try CDPSession.open(wsURL: wsURL)
+        let session = try CDPSession.open(wsURL: page.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
         let result = try await session.call("Runtime.evaluate", params: [
             "expression": CDPDigest.evaluateExpression,
