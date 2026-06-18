@@ -720,12 +720,27 @@ struct GhostHandsCLI {
         }
     }
 
-    // MARK: - drag (pixel)
+    // MARK: - drag (pixel coords OR element-to-element)
 
     @MainActor
     static func runDrag(_ rest: [String]) async {
-        // `--visible` may appear in any order; the rest are positional x1 y1 x2 y2 app.
+        // `--visible` may appear in any order. `drag` has TWO forms that share the
+        // verb, told apart by their positional shape (mirroring how `act` overloads):
+        //   - PIXEL coords:  drag <x1> <y1> <x2> <y2> <app>   (5 positionals, all-numeric coords)
+        //   - ELEMENT names: drag "<from>" "<to>" <app>       (3 positionals, names not numbers)
+        // We route to the element form whenever there are EXACTLY 3 positionals — the
+        // arity alone is unambiguous: a pixel drag needs 5 (x1 y1 x2 y2 app), so a
+        // 3-positional drag can NEVER be a valid pixel drag, and routing on count
+        // (not on "first two aren't numbers") keeps numerically-NAMED elements
+        // reachable — e.g. `drag "5" "7" Calculator` drags keypad button 5 onto 7
+        // instead of silently falling through to the pixel parser and printing usage.
+        // Anything else (4 positionals, 6+, etc.) falls through to the pixel parser,
+        // which reports the precise coord/arity error.
         let (mode, pos) = PixelFlags.parse(rest)
+        if pos.count == 3 {
+            await runDragElement(from: pos[0], to: pos[1], appSpec: pos[2], mode: mode)
+            return
+        }
         guard pos.count >= 5 else { usage() }
         guard let x1 = Double(pos[0]) else { failBadCoord("drag", pos[0]) }
         guard let y1 = Double(pos[1]) else { failBadCoord("drag", pos[1]) }
@@ -741,6 +756,41 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("drag")
         }
+    }
+
+    /// The ELEMENT-to-element drag form: resolve both named elements, aim at their
+    /// centers, post a pixel drag, and witness by re-resolving the from-element's
+    /// frame. Honest about VERIFIED (observed move/vanish) vs dispatched-unverified.
+    @MainActor
+    static func runDragElement(from: String, to: String, appSpec: String,
+                               mode: PixelMode) async {
+        do {
+            let outcome = try GhostHands.dragElement(from: from, to: to,
+                                                     appSpec: appSpec, mode: mode)
+            print(reportDragElement(outcome))
+        } catch let error as GhostHandsError {
+            fail("drag", error)
+        } catch {
+            failUnexpected("drag")
+        }
+    }
+
+    /// Honest one-liner for an element-to-element drag. VERIFIED quotes the
+    /// observed from-element move/vanish; otherwise the drag is
+    /// dispatched-unverified (events sent, no observable move — exit 0, never a
+    /// success claim). The `.visible` HID exception is LABELLED so a moved cursor /
+    /// focus steal is never silent; the invisible default adds nothing.
+    static func reportDragElement(_ o: DragElementOutcome) -> String {
+        let route = "\(o.from.debugDescription) → \(o.to.debugDescription) in \(o.app)"
+        let tag = o.mode == .visible
+            ? " [visible HID — cursor moved; events route by screen geometry, may steal focus]"
+            : " [invisible CGEventPostToPid — postToPid is coordinate-only; a "
+                + "background/non-key surface may ignore the drag]"
+        if o.verified {
+            return "dragged \(route)\(tag) — verified: \(o.evidence ?? "from-element moved")"
+        }
+        return "dragged \(route)\(tag) — events dispatched; no observable move "
+            + "(effect unverified)"
     }
 
     /// Honest one-liner for a pixel poke. VERIFIED quotes the observed pixel diff;
@@ -1099,6 +1149,7 @@ struct GhostHandsCLI {
           ghosthands shot <app> <out.png>             honest screenshot (refuses without Screen Recording)
           ghosthands click-at <x> <y> <app> [--visible]           left click at a GLOBAL screen point (pixel, verify-by-diff)
           ghosthands drag <x1> <y1> <x2> <y2> <app> [--visible]   press-move-release between two GLOBAL points (pixel)
+          ghosthands drag "<from>" "<to>" <app> [--visible]       drag one named element onto another (centers), verified by from-element move/vanish
           ghosthands scroll <app> <up|down|left|right> [amount] [--in <name>] [--visible]   scroll a list/scroll-area, verified by the scroll-bar position
           ghosthands key "<spec>" [app] [--visible]               post a keystroke/chord (e.g. return, cmd+s) — dispatched-unverified
           ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
@@ -1265,6 +1316,22 @@ struct GhostHandsCLI {
             or a list with no readable scroll bar, is honestly DISPATCHED, NEVER a fake success.
             [amount] is a positive page count (default 1 page); a bad direction/amount REFUSES
             (exit 2) before acting.
+          - drag "<from>" "<to>" <app> is the ELEMENT form of drag (told apart from the
+            pixel form by ARITY: exactly 3 positionals — a pixel drag needs 5, so the
+            names may themselves be numeric, e.g. drag "5" "7" Calculator). It RESOLVES both named elements
+            (same refuse-on-not-found / refuse-on-ambiguous rules as click, over the openable
+            gate — rows/cells/files/controls), aims at each element's CENTER, and posts a
+            pixel drag (mouse-down at from-center, interpolated drags to to-center, mouse-up
+            at to-center) via the SAME posting helpers as the pixel verbs (invisible
+            CGEventPostToPid by default; --visible warps the real cursor + HID tap, NOT
+            invisible, may steal focus). It REFUSES (.noElementFrame) if EITHER element exposes
+            no readable AX frame to aim at. A pixel drag has NO self-signal, so it WITNESSES by
+            re-resolving the FROM-element off a fresh tree and comparing its frame: the
+            from-element's center MOVED past a small floor, or it VANISHED ⇒ VERIFIED (quotes
+            before → after); still at the same center, or its frame unreadable on read-back ⇒
+            dispatched-unverified — events sent, no observable move, NEVER a faked success. The
+            witness only under-claims (a drop that does not relocate the source reads as
+            dispatched), never a false verified.
           - install mounts the DMG (hdiutil), finds the SINGLE top-level .app, and
             copies it with cp -R (no GUI drag — no cursor, no focus steal), then
             ALWAYS detaches the mount. It REFUSES (nothing copied) on a missing DMG,
