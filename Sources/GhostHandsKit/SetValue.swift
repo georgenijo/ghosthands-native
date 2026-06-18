@@ -144,6 +144,19 @@ extension GhostHands {
         let probe = EffectProbe(pid: target.pid, settle: settle)
         let witnessBefore = probe.captureBefore(of: element)
 
+        // AUTO-FOCUS (best-effort, `type` only): focus the field BEFORE writing
+        // its value so the field is actually ACTIVE — a later Enter/submit then
+        // lands on it. This is purely a side-effect to make a subsequent key
+        // dispatch work; it does NOT enter the honesty verdict. If focus is not
+        // confirmed (AXFocused unsettable / reads back false), we STILL proceed to
+        // set the value: `type` is verified by the value read-back below, never by
+        // focus, so we must never refuse the type just because focus was
+        // unconfirmed. Scoped to `type` (coerceForRole==false) — `set-value`
+        // mutates checkboxes/sliders/popups that need no text-entry focus.
+        if !coerceForRole {
+            _ = setFocused(element: element, facts: facts, pid: target.pid, settle: settle)
+        }
+
         // DISPATCH. setValue==false means AX rejected outright → REFUSE. A `true`
         // here is ONLY a dispatch — it is the read-back below, not this boolean,
         // that may promote the result to VERIFIED.
