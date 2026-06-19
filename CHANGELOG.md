@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.8-m4 — 2026-06-19 — Vision/OCR: the universal fallback eye (drive ANY app)
+
+**Added — `ocr` + `ocr-click`: locate + act on surfaces with no AX and no DOM** (a
+canvas, a game, a remote screen, a web view with no debug port). Closes the deferred
+vision/OCR fork (issue #1) and completes the locator ladder: **AX → CDP → Vision.**
+- **`ocr <app>`** — screenshot the front window (ScreenCaptureKit) and run Apple
+  **Vision** text recognition, returning every recognized line + its on-screen rect.
+  Pure read; needs Screen Recording. A *system* framework — no new SwiftPM dependency.
+- **`ocr-click "<text>" <app>`** — OCR, match the phrase (exact-beats-substring), and
+  click its center via the **visible HID** path (cursor moves — the labelled
+  exception), verified by the screenshot-diff `click-at` already enforces. REFUSES
+  when no line matches (never clicks a guessed point — OCR is the fuzziest tier) or
+  when >1 match with no exact hit.
+
+CLI + 36th MCP tool (`ocr`, the read eye; `ocr-click` is CLI like the other pixel
+verbs). Pure coordinate flip (Vision normalized/bottom-left → screen/top-left) and
+the matcher are hermetically tested (744 total, +6).
+
+**Live-verified — all three "drive any app" features composing:** `ocr Cursor` read
+20 text regions with coords off Cursor's web-rendered welcome screen (where AX saw no
+inputs), then `GHOSTHANDS_GLIDE=1 ocr-click "whoop-dashboard" Cursor` **found** the
+text via Vision, **glided** the real cursor to (1131,783), clicked, and **VERIFIED**
+by pixel-diff (32.6% changed) — opening the project. Step 3 of 3 done (glide →
+Electron-CDP → **Vision/OCR**). Version 0.8.7-m4 → 0.8.8-m4.
+
 ## 0.8.7-m4 — 2026-06-19 — Electron-CDP: `web type` for custom editors
 
 **Added — `web type "<@eN|selector>" "<text>" [--submit]`: type via CDP

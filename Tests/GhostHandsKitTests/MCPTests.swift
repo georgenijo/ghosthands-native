@@ -115,7 +115,7 @@ final class MCPTests: XCTestCase {
         // act tier (named control)
         "focus", "right_click", "scroll", "drag", "menu",
         // read + checked tiers
-        "extract", "dialog", "wait", "assert", "apps",
+        "extract", "dialog", "wait", "assert", "apps", "ocr",
         // system tier
         "clipboard_read", "clipboard_write", "navigate", "key", "install",
         // windows

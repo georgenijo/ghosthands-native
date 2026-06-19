@@ -153,6 +153,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// `menu` was given more path segments after an item that has no submenu — the
     /// path walked past a leaf. We REFUSE rather than press a leaf as if it opened.
     case notASubmenu(segment: String, app: String)
+    /// `ocr-click` ran Vision OCR over the window but no recognized line matched the
+    /// query. We REFUSE rather than click a guessed point — OCR is the fuzziest
+    /// tier, so a miss must never become a blind poke. The recognized lines are
+    /// listed so the caller can pick real text.
+    case ocrTextNotFound(query: String, app: String, found: [String])
     /// `web select` found the `<select>`, but NO option's value or visible text
     /// matched the request. We REFUSE rather than leave the prior selection and
     /// claim a no-op succeeded — the available options are listed so the caller can
@@ -327,6 +332,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .notASubmenu(segment, app):
             return "menu item \(segment.debugDescription) in \(app) has no submenu — "
                 + "the menu path continues past a leaf item"
+        case let .ocrTextNotFound(query, app, found):
+            let sample = found.prefix(8).map { $0.debugDescription }.joined(separator: ", ")
+            return "OCR found no text matching \(query.debugDescription) in \(app) — "
+                + "refusing to click a guessed point; recognized e.g.: \(sample.isEmpty ? "(none)" : sample)"
         case let .optionNotFound(value, selector, options):
             let list = options.isEmpty ? "(none)" : options.map { $0.debugDescription }.joined(separator: ", ")
             return "no option matching \(value.debugDescription) in "

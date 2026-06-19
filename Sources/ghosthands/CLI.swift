@@ -60,6 +60,10 @@ struct GhostHandsCLI {
             runAssert(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
+        case "ocr":
+            await runOCR(Array(args.dropFirst()))
+        case "ocr-click", "ocrclick":
+            await runOCRClick(Array(args.dropFirst()))
         case "click-at":
             await runClickAt(Array(args.dropFirst()))
         case "drag":
@@ -1545,6 +1549,48 @@ struct GhostHandsCLI {
         }
     }
 
+    // MARK: - ocr / ocr-click (Vision OCR — the universal fallback eye)
+
+    @MainActor
+    static func runOCR(_ rest: [String]) async {
+        let pos = scanJSON(rest)
+        guard let appSpec = pos.first else { usage() }
+        do {
+            let items = try await GhostHands.ocr(appSpec: appSpec)
+            if jsonMode { JSONResult.fromOCR(items, app: appSpec).emit() }
+            else {
+                print("— \(items.count) text region(s) via Vision OCR in \(appSpec)")
+                for it in items {
+                    let r = it.screenRect
+                    print("\(it.text.debugDescription)  @(\(Int(r.minX)),\(Int(r.minY)) "
+                        + "\(Int(r.width))×\(Int(r.height)))  conf=\(Int(it.confidence * 100))%")
+                }
+            }
+        } catch let error as GhostHandsError {
+            fail("ocr", error)
+        } catch {
+            failUnexpected("ocr")
+        }
+    }
+
+    @MainActor
+    static func runOCRClick(_ rest: [String]) async {
+        let pos = scanJSON(rest)
+        // ocr-click "<text>" <app>
+        guard pos.count >= 2 else { usage() }
+        let query = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try await GhostHands.ocrClick(text: query, appSpec: appSpec)
+            if jsonMode { JSONResult.fromPixel(outcome).emit() }
+            else { print(reportPixel(outcome)) }
+        } catch let error as GhostHandsError {
+            fail("ocr-click", error)
+        } catch {
+            failUnexpected("ocr-click")
+        }
+    }
+
     // MARK: - drag (pixel coords OR element-to-element)
 
     @MainActor
@@ -2178,6 +2224,8 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
+          ghosthands ocr <app>                        Vision OCR the window: recognized text + screen rects (no AX/DOM needed; needs Screen Recording)
+          ghosthands ocr-click "<text>" <app>         find a phrase via OCR + click it (visible HID, verified by pixel-diff; refuses on no/ambiguous match)
           ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)
           ghosthands web close                                                       terminate the managed session + remove its throwaway profile
           ghosthands web wait (--text <s> | --url <glob> | --selector <css> [--gone] | --load domcontentloaded|networkidle) [browser] [--timeout s] [--interval ms]   page-side wait; timeout REFUSES (like AX wait)

@@ -178,6 +178,14 @@ public enum MCPTools {
              ],
              required: ["path", "app"]),
 
+        Tool(name: "ocr",
+             description: "Vision OCR a window: recognize on-screen text + where each line "
+                 + "sits (screen rect), for surfaces with no AX and no DOM (canvas, games, "
+                 + "remote screens). Pure read; needs Screen Recording. The universal "
+                 + "fallback eye.",
+             properties: [appProp],
+             required: ["app"]),
+
         Tool(name: "apps",
              description: "List running GUI apps (name, bundle id, pid, frontmost) — "
                  + "the app-level eye for 'what's open?'. Pure read; faceless daemons "
