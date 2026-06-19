@@ -2175,14 +2175,21 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runReplay(_ rest: [String]) {
-        // replay <flow.json> [--keep-going], flag in any order.
+        // replay <flow.json> [--keep-going] [--report-json <path>] [--report-junit <path>]
         let scanned = scanJSON(rest)
         var flowPath: String?
         var keepGoing = false
-        for arg in scanned {
-            switch arg {
-            case "--keep-going": keepGoing = true
-            default: if flowPath == nil { flowPath = arg }
+        var reportJSONPath: String?
+        var reportJUnitPath: String?
+        var i = 0
+        while i < scanned.count {
+            switch scanned[i] {
+            case "--keep-going": keepGoing = true; i += 1
+            case "--report-json":
+                if i + 1 < scanned.count { reportJSONPath = scanned[i + 1]; i += 2 } else { i += 1 }
+            case "--report-junit":
+                if i + 1 < scanned.count { reportJUnitPath = scanned[i + 1]; i += 2 } else { i += 1 }
+            default: if flowPath == nil { flowPath = scanned[i] }; i += 1
             }
         }
         guard let flowPath else { usage() }
@@ -2198,6 +2205,10 @@ struct GhostHandsCLI {
                     print("step \(index)/\(total): \(line)")
                 }
             }
+            // Write the structured report(s) (issue #3) before exiting — on BOTH the
+            // json and human paths. A write failure is noted to stderr but NEVER
+            // changes the exit code (the replay already ran + reported honestly).
+            writeFlowReports(run.report, jsonPath: reportJSONPath, junitPath: reportJUnitPath)
             let s = run.summary
             if jsonMode {
                 // The exit code is UNCHANGED — `exit(s.exitCode)` below — and the
@@ -2219,6 +2230,25 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("replay")
         }
+    }
+
+    /// Write the JSON / JUnit flow reports to the requested paths (issue #3). A
+    /// write failure is surfaced to stderr but does NOT change the exit code — the
+    /// replay already ran and reported its honest verdict; a report-file IO error
+    /// must not turn a passing run into a failure (or vice-versa).
+    static func writeFlowReports(_ report: FlowReport, jsonPath: String?, junitPath: String?) {
+        func write(_ content: String, to path: String, kind: String) {
+            do {
+                try content.write(toFile: path, atomically: true, encoding: .utf8)
+                FileHandle.standardError.write(Data("— \(kind) report written to \(path)\n".utf8))
+            } catch {
+                let msg = "— could not write \(kind) report to \(path): "
+                    + "\(error.localizedDescription)\n"
+                FileHandle.standardError.write(Data(msg.utf8))
+            }
+        }
+        if let jsonPath { write(report.json(), to: jsonPath, kind: "JSON") }
+        if let junitPath { write(report.junitXML(), to: junitPath, kind: "JUnit") }
     }
 
     // MARK: - record
@@ -2401,7 +2431,7 @@ struct GhostHandsCLI {
           ghosthands clipboard read                   print the current pasteboard string (UTF-8); empty → honest note, exit 0
           ghosthands clipboard write "<text>"         set the pasteboard string, then READ IT BACK — verified by read-back
           ghosthands install <dmg-path> [--force] [--dest <dir>]  install a .app from a DMG via cp -R (default dest /Applications)
-          ghosthands replay <flow.json> [--keep-going] run a recorded flow in order (stops on refuse)
+          ghosthands replay <flow.json> [--keep-going] [--report-json <path>] [--report-junit <path>]   run a recorded flow in order (stops on refuse); optionally write a JSON / JUnit pass-fail report (CI)
           ghosthands record <flow.json> <verb> <args> run a verb AND append it to the flow if it didn't refuse
           ghosthands version
 

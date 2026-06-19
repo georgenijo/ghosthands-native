@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.16-m4 — 2026-06-19 — `replay` writes a JSON / JUnit pass-fail report (issue #3)
+
+**Added — `replay <flow> [--report-json <path>] [--report-junit <path>]`: a structured
+UI-test report for CI.** The flow-runner already executed each step with an honest verdict,
+stopped on the first refuse, and exited nonzero on any refuse (the pure `ReplayPolicy`);
+now it can emit a machine-readable record of what happened — a stable JSON object and a
+JUnit XML file a CI consumes. Each step row carries its index, verb, human summary, status,
+and the verb's own verdict/refuse line; the aggregate carries total/executed/verified/
+dispatched/refused/skipped + the exit code. A step after an early stop is recorded
+**skipped** so every step in the flow is accounted for.
+
+**Honesty:** the report is a faithful projection of the verdicts the verbs already produced
+— `verified` (proven), `dispatched` (acted, unproven — never a success claim), `refused`
+(the world diverged → the run fails), `skipped`. The counts + exit code come from the SAME
+pure `ReplayPolicy.Summary` the live run uses (no second copy to drift). JUnit has only
+pass/failure/skipped, so a `refused` step is a `<failure>` (failures == refused == nonzero
+exit), a `skipped` step a `<skipped>`, and a `dispatched` step PASSES (consistent with the
+exit-0 policy — it acted) but carries a `<system-out>` "dispatched-unverified" note so a
+reader is never misled into thinking it was proven. Every attribute + text node is
+XML-escaped (no injection). A report-file write error is noted to stderr but NEVER changes
+the exit code — a passing run stays passing.
+
+Pure report shaping + both serializers are hermetically tested (833 total, +6);
+live-verified: a flow with a refuse + a skipped step wrote a JSON report (honest counts,
+exit 1) and valid escaped JUnit XML (`failures="1" skipped="1"`). Closes #3. Version
+0.8.15-m4 → 0.8.16-m4.
+
 ## 0.8.15-m4 — 2026-06-19 — `see`/`web` pierce open shadow DOM + same-origin iframes
 
 **Added — the CDP page digest + actuation probes now descend into OPEN shadow roots and

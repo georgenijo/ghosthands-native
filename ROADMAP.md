@@ -220,9 +220,12 @@ occlusion-refused, stale-refused, dispatched-unverified — never a fake success
   honesty fix from the review). Closes the Cursor-composer capstone gap (shadow half). 827 tests.
 - **#1 closed** (Vision/OCR shipped + folded into `see`).
 
-**Open backlog:** #3 (UI-test flow-runner + JSON/JUnit report — next pickup), #4
-(packaging/notarization — blocked on an Apple Developer signing identity), #2 (always-on
-daemon + AXObserver — deferred, needs a design pass).
+- **#3 ✅ (0.8.16)** — `replay --report-json/--report-junit` emits a CI pass-fail report
+  (JSON + JUnit XML) over the existing honest per-step verdicts; `refused`→`<failure>`,
+  `dispatched`→pass+note, `skipped` accounted, exit mirrors the policy. 833 tests.
+
+**Open backlog:** #4 (packaging/notarization — blocked on an Apple Developer signing
+identity), #2 (always-on daemon + AXObserver — deferred, needs a design pass).
 - **Dock launch-witness — evaluated, DEFERRED.** A worktree agent built an honest,
   hermetically-tested launch-witness (poll `apps()` after a Dock press → promote to VERIFIED
   on a fresh launch/activation). Live-verify rejected it: AXPress on a Dock tile doesn't
