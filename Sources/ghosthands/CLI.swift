@@ -2334,8 +2334,8 @@ struct GhostHandsCLI {
 
         USAGE:
           ghosthands click "<name>" <app> [--role <AXRole>] [--text <substr>] [--nth <i>]   press a named control (AX, cursor-less)
-          ghosthands type "<text>" "<field>" <app>    set a text field's value, then read it back
-          ghosthands set-value "<v>" "<ctl>" <app>    set a checkbox/slider/popup, then read it back
+          ghosthands type "<text>" "<field>" <app> [--role <AXRole>] [--text <substr>] [--nth <i>]   set a text field's value, then read it back
+          ghosthands set-value "<v>" "<ctl>" <app> [--role <AXRole>] [--text <substr>] [--nth <i>]   set a checkbox/slider/popup, then read it back
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands right-click "<name>" <app> [--visible]   open an element's context menu (AXShowMenu, else pixel right-click), verified by menu-appeared
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)

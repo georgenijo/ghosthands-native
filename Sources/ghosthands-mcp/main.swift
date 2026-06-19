@@ -96,15 +96,20 @@ struct GhostHandsMCP {
             switch name {
             // MARK: existing 8 verbs — UNCHANGED honesty mapping (per-Outcome).
             case "click":
-                let o = try GhostHands.click(name: arg("name"), appSpec: arg("app"))
+                let o = try GhostHands.click(name: arg("name"), appSpec: arg("app"),
+                                             locator: locator)
                 return MCPMapping.map(o)
             case "type":
+                // `type` disambiguates by role/nth only — its `text` arg is the text to
+                // TYPE, not a `--text` field-label locator (which would collide).
+                let typeLocator = LocatorSpec(role: optStr("role"), text: nil,
+                                              nth: MCPProtocol.int("nth", from: arguments))
                 let o = try GhostHands.type(text: arg("text"), field: arg("field"),
-                                            appSpec: arg("app"))
+                                            appSpec: arg("app"), locator: typeLocator)
                 return MCPMapping.map(o)
             case "set_value":
                 let o = try GhostHands.setValue(value: arg("value"), control: arg("control"),
-                                                appSpec: arg("app"))
+                                                appSpec: arg("app"), locator: locator)
                 return MCPMapping.map(o)
             case "doubleclick":
                 let o = try GhostHands.doubleclick(name: arg("name"), appSpec: arg("app"))

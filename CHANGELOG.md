@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.12-m4 — 2026-06-19 — `type`/`set-value` locators on the MCP surface (issue #5)
+
+**Fixed — `click`/`type`/`set_value` now advertise + honor the `--role`/`--text`/`--nth`
+locator disambiguators on the MCP surface.** The CLI already parsed them via the shared
+`parseLocator` and threaded a `LocatorSpec` into the kit verbs (which have always accepted
+it); the gap was the MCP layer, which BUILT a locator from role/text/nth args but only
+passed it to `focus`/`right_click` — not `click`/`type`/`set_value`. Now all three pass it.
+**Honesty:** a locator only changes WHICH control resolves (the same refuse-on-ambiguous
+gate, now disambiguable) — the verdict logic is untouched, so no new success path. The
+`type` tool is the careful case: its required `text` arg is the text to TYPE, so it
+advertises `role`/`nth` only (a `--text` field-label locator would collide with the
+type-text key) — caught + avoided. CLI help for `type`/`set-value` updated to show the
+flags. 802 hermetic tests (+3). Closes #5.
+
 ## 0.8.11-m4 — 2026-06-19 — `act "@ref"`: the unified actuator (feature A, slice A3 — wave complete)
 
 **Added — `act "@ref" <app> [--type "<text>"] [--submit]`: the unified hand.** The

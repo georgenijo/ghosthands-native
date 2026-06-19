@@ -120,7 +120,7 @@ public enum MCPTools {
              properties: [
                  Property(name: "name", type: "string",
                           description: "the control's on-screen name"),
-                 appProp,
+                 appProp, roleProp, textProp, nthProp,
              ],
              required: ["name", "app"]),
 
@@ -132,7 +132,10 @@ public enum MCPTools {
                           description: "the text to enter"),
                  Property(name: "field", type: "string",
                           description: "the text field's name"),
-                 appProp,
+                 // NOTE: no `text` locator disambiguator here — the `text` arg above is
+                 // the text to TYPE, a different meaning. `type` disambiguates by
+                 // role/nth only (a `--text` field-label locator would collide).
+                 appProp, roleProp, nthProp,
              ],
              required: ["text", "field", "app"]),
 
@@ -144,7 +147,7 @@ public enum MCPTools {
                           description: "the value to set"),
                  Property(name: "control", type: "string",
                           description: "the control's name"),
-                 appProp,
+                 appProp, roleProp, textProp, nthProp,
              ],
              required: ["value", "control", "app"]),
 
