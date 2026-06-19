@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.8.15-m4 — 2026-06-19 — `see`/`web` pierce open shadow DOM + same-origin iframes
+
+**Added — the CDP page digest + actuation probes now descend into OPEN shadow roots and
+SAME-ORIGIN iframes.** Before, `see`/`web read` walked `document` only, so a control inside
+a web component (a custom-element library, or an Electron editor like Cursor's agent
+composer, which lives in a shadow root) was invisible — and an `@eN` stamped there couldn't
+be re-found, so `web click @eN` falsely refused as stale. Now a shared in-page traversal
+(`ghForEachRoot`/`ghQuery`) walks the document + every open `shadowRoot` + every same-origin
+iframe `contentDocument`, cycle-bounded by a visited-set, and every probe (`web read`/`see`
+digest, `web click`/`fill`/`select`/`type` resolve, the occlusion hit-test, `web html`, the
+`--text` finder) routes through it. Cross-root `@eN` refs are monotonic + non-colliding, so a
+shadow/iframe ref reattaches instead of refusing.
+
+**Honesty:** only OPEN shadow roots (a closed root's `shadowRoot` is null → skipped) and
+SAME-ORIGIN iframes (a cross-origin `contentDocument` access throws → caught + skipped) are
+pierced — a control reachable only via closed/cross-origin content is an honest miss
+(`{found:false}` → the existing stale/not-found refuse), never fabricated. The verdict logic
+is untouched — only WHICH element a selector/ref resolves to changed.
+
+**Honesty fix from the adversarial review (the one real hole, found + closed before ship):**
+an element inside a same-origin **iframe** has an iframe-RELATIVE bounding box, but the click
+dispatch + occlusion guard run in TOP-LEVEL viewport coords — so clicking an offset iframe
+target would land on the wrong point and could even fabricate a navigation-`verified`. Shadow
+roots share the host's coordinate frame (safe); iframes don't. So `web read`/`see` still
+SURFACE iframe elements (reading is honest), but `web click`/`web click --text` now REFUSE an
+iframe-hosted target (`iframeClickUnsupported`) rather than dispatch at uncorrected geometry
+(`web fill` is unaffected — it focuses + sets value, no coordinate dispatch). Cross-frame
+click-coordinate translation is a future enhancement.
+
+Pure row-shaping + the `isInFrame` gate are hermetically tested (827 total, +11); honesty
+review caught the iframe hole (now PASS). Live-verified: a button inside an OPEN shadow root
+is surfaced by `web read` (`@e2`) and `web click @e2` pierces + verifies via an aria-pressed
+flip (no regression — light-DOM elements still listed); a same-origin iframe button is
+surfaced by read but `web click` REFUSES it. Closes the Cursor-composer capstone gap (shadow
+half). Version 0.8.14-m4 → 0.8.15-m4.
+
 ## 0.8.14-m4 — 2026-06-19 — `act "@ref"` pins the CDP renderer `see` read (A3 follow-up)
 
 **Fixed — a CDP `@ref` from a non-default renderer is now actionable.** A3's adversarial

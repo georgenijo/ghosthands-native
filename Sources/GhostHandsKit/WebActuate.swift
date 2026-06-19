@@ -113,14 +113,31 @@ public enum WebActuate {
         let selJSON = jsonStringLiteral(selector)
         return """
         (() => {
+          \(CDPDigest.shadowPierceJS)
           const sel = \(selJSON);
-          let el;
-          try { el = document.querySelector(sel); } catch (e) { el = null; }
+          // Pierce open shadow roots / same-origin iframes so a `[data-gh-ref]`
+          // stamped inside a web component is re-found (else a shadow @ref would
+          // falsely refuse as stale). `ghQuery` swallows a bad-selector throw → null.
+          const el = ghQuery(sel);
           if (!el) { return { found: false }; }
           const r = el.getBoundingClientRect();
           const cx = r.x + r.width / 2;
           const cy = r.y + r.height / 2;
-          const hit = document.elementFromPoint(cx, cy);
+          // Hit-test inside the element's OWN root: a `shadowRoot`/`document`'s
+          // `elementFromPoint` returns the element AS SEEN in that root, so a
+          // shadow-hosted target isn't mistaken for "covered" by its own host.
+          // Walk down through any nested shadow roots at that point to the deepest
+          // element actually painted there (the real occluder, if any).
+          let hit = null;
+          const rootNode = (el.getRootNode && el.getRootNode()) || document;
+          if (rootNode.elementFromPoint) {
+            hit = rootNode.elementFromPoint(cx, cy);
+            while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+              const deeper = hit.shadowRoot.elementFromPoint(cx, cy);
+              if (!deeper || deeper === hit) break;
+              hit = deeper;
+            }
+          }
           // Covered iff the topmost element at the center is neither the target
           // nor inside it (a child painting on top is still the target) nor an
           // ancestor that wraps it (clicking the wrapper still hits the target).
@@ -132,10 +149,19 @@ public enum WebActuate {
           }
           const tag = (el.tagName || '').toLowerCase();
           const type = (el.getAttribute && (el.getAttribute('type') || '')).toLowerCase();
+          // `inFrame`: the element lives inside a SAME-ORIGIN iframe document (its
+          // ownerDocument differs from the top document). A shadow root shares the
+          // host document, so shadow-hosted elements are NOT inFrame. The click
+          // dispatch + occlusion hit-test use TOP-LEVEL viewport coords, but an
+          // iframe's getBoundingClientRect is iframe-relative — so clicking an offset
+          // iframe target would land on the wrong point. We surface iframe elements
+          // for READING but REFUSE clicking them (uncorrected cross-frame geometry),
+          // rather than dispatch at a translated guess.
           return {
             found: true, covered, coveredBy,
             x: r.x, y: r.y, w: r.width, h: r.height,
-            tag, type, isSecure: (tag === 'input' && type === 'password')
+            tag, type, isSecure: (tag === 'input' && type === 'password'),
+            inFrame: (el.ownerDocument !== document)
           };
         })()
         """
@@ -157,9 +183,10 @@ public enum WebActuate {
         let wantJSON = jsonStringLiteral(value)
         return """
         (() => {
+          \(CDPDigest.shadowPierceJS)
           const want = \(wantJSON);
-          let el;
-          try { el = document.querySelector(\(selJSON)); } catch (e) { el = null; }
+          // Pierce shadow roots / same-origin iframes to re-find a stamped ref.
+          const el = ghQuery(\(selJSON));
           if (!el) { return { found: false }; }
           const tag = (el.tagName || '').toLowerCase();
           if (tag !== 'select') {
@@ -219,6 +246,16 @@ public enum WebActuate {
         boolValue(dict["isSecure"])
     }
 
+    /// True iff the probe object reports the target lives in a SAME-ORIGIN IFRAME —
+    /// the gate `web click` uses to REFUSE: the click dispatch + occlusion guard run
+    /// in top-level viewport coords, but an iframe's box is iframe-relative, so an
+    /// offset iframe target would be clicked at the WRONG point (and could fabricate
+    /// a navigation-verified). We surface iframe elements for reading but refuse to
+    /// click them via uncorrected cross-frame geometry. Shadow-DOM is NOT inFrame.
+    public static func isInFrame(from dict: [String: Any]) -> Bool {
+        boolValue(dict["inFrame"])
+    }
+
     // MARK: - Pure verdicts (mirror NavVerdict / ValueVerdict)
 
     /// One actuation verdict — VERIFIED (an observed world-change proved it) or
@@ -259,7 +296,8 @@ public enum WebActuate {
         let sel = jsonStringLiteral(selector)
         return """
         (() => {
-          let el; try { el = document.querySelector(\(sel)); } catch (e) { el = null; }
+          \(CDPDigest.shadowPierceJS)
+          const el = ghQuery(\(sel));   // pierce shadow roots / same-origin iframes
           if (!el) return null;
           const out = {};
           for (const a of ['aria-pressed','aria-checked','aria-expanded','aria-selected']) {
@@ -383,7 +421,8 @@ public enum WebActuate {
         let sel = jsonStringLiteral(selector)
         return """
         (() => {
-          let el; try { el = document.querySelector(\(sel)); } catch (e) { el = null; }
+          \(CDPDigest.shadowPierceJS)
+          const el = ghQuery(\(sel));   // pierce shadow roots / same-origin iframes
           if (!el) { return { found: false }; }
           if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
           el.focus();
@@ -399,7 +438,8 @@ public enum WebActuate {
         let sel = jsonStringLiteral(selector)
         return """
         (() => {
-          const el = document.querySelector(\(sel));
+          \(CDPDigest.shadowPierceJS)
+          const el = ghQuery(\(sel));   // pierce shadow roots / same-origin iframes
           if (!el) return null;
           return (typeof el.value === 'string') ? el.value
                : (el.innerText || el.textContent || '');

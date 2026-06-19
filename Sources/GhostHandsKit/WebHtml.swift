@@ -63,9 +63,12 @@ public enum WebHtml {
         let propsJSON = computedPropsJSONArray()
         return """
         (() => {
+          \(CDPDigest.shadowPierceJS)
           const sel = \(selJSON);
-          let el;
-          try { el = document.querySelector(sel); } catch (e) { el = null; }
+          // Pierce open shadow roots / same-origin iframes so a `[data-gh-ref]`
+          // stamped inside a web component is re-found (else a shadow @ref would
+          // falsely refuse as stale). `ghQuery` swallows a bad-selector throw → null.
+          const el = ghQuery(sel);
           if (!el) { return { found: false }; }
           const cap = \(outerHTMLCap);
           const raw = el.outerHTML || '';

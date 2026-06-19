@@ -150,6 +150,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than dispatch a click that would land on the covering element
     /// (the agent-browser-mined refuse: never click through an overlay).
     case elementCovered(selector: String, coveredBy: String)
+    /// A `web click` target lives inside a SAME-ORIGIN IFRAME. `see`/`web read`
+    /// surface iframe elements, but the click dispatch + occlusion guard run in
+    /// top-level viewport coords while an iframe's box is iframe-relative — clicking
+    /// an offset iframe target would land on the wrong point (and could fabricate a
+    /// navigation-verified). We REFUSE rather than dispatch at a translated guess
+    /// (cross-frame click-coordinate translation is a future enhancement).
+    case iframeClickUnsupported(selector: String)
     /// A `web click` / `web fill` was forced onto the `--ax` lens, but a CSS
     /// selector has no AX equivalent — these selector verbs REQUIRE CDP. A
     /// usage-class refuse, surfaced before any work.
@@ -348,6 +355,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .selectorNotFound(selector, app):
             return "no element matching selector \(selector.debugDescription) in "
                 + "\(app)'s page — refusing to actuate a target that is not in the DOM"
+        case let .iframeClickUnsupported(selector):
+            return "\(selector.debugDescription) is inside a same-origin iframe — "
+                + "refusing to click via uncorrected cross-frame geometry (the dispatch "
+                + "uses top-level coords); read it with `web read`/`see`, or target it "
+                + "in the top document"
         case let .elementCovered(selector, coveredBy):
             return "\(selector.debugDescription) is covered by a <\(coveredBy)> at its "
                 + "center point — refusing to click through an overlay (the click "

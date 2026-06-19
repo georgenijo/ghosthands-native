@@ -400,7 +400,11 @@ public enum CDPDigest {
       if (!nm && el.id) {
         try {
           const key = (window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id;
-          const l = document.querySelector('label[for="' + key + '"]');
+          // Resolve `label[for=id]` within the element's OWN root (the document,
+          // or the shadow root it lives in) so a labelled control inside a shadow
+          // root still finds its <label> — a cross-root lookup would miss it.
+          const scope = (el.getRootNode && el.getRootNode()) || document;
+          const l = scope.querySelector('label[for="' + key + '"]');
           if (l) nm = (l.innerText || '').trim();
         } catch (e) {}
       }
@@ -412,113 +416,192 @@ public enum CDPDigest {
     };
     """
 
+    /// JS that walks EVERY reachable root — the document, plus each OPEN shadow
+    /// root, plus each SAME-ORIGIN iframe's contentDocument — letting a caller run
+    /// its own per-root `querySelectorAll`. This is the shadow/iframe piercing the
+    /// plain `document.querySelectorAll` CANNOT do: that call stops at a shadow
+    /// boundary, so a component library / Electron editor (Cursor's agent composer
+    /// lives in a shadow root) is otherwise invisible to `see`/`web read`.
+    ///
+    /// HONESTY — only what is genuinely reachable is pierced; the rest is skipped
+    /// SILENTLY (never fabricated):
+    ///   - `el.shadowRoot` is non-null ONLY for an OPEN shadow root; a CLOSED one
+    ///     returns null, so it is honestly skipped (we never invent its contents).
+    ///   - a SAME-ORIGIN iframe exposes `contentDocument`; a CROSS-ORIGIN iframe
+    ///     THROWS on that access (the browser's same-origin policy), which the
+    ///     try/catch swallows — the frame is skipped, never guessed at.
+    /// A `seen` set bounds cycles (a frame that re-references an ancestor root).
+    /// `ghForEachRoot(fn)` invokes `fn(root)` once per reachable root in document
+    /// order. The shadow HOST and the `<iframe>` element are themselves visited as
+    /// ordinary members of their parent root, so an interactive host stays
+    /// collectable; their INNER trees are reached via the descent below.
+    static let shadowPierceJS = """
+    const ghForEachRoot = (fn) => {
+      const seen = new Set();
+      const walk = (root) => {
+        if (!root || seen.has(root)) return;
+        seen.add(root);
+        fn(root);
+        let hosts;
+        try { hosts = root.querySelectorAll('*'); } catch (e) { hosts = []; }
+        for (const el of hosts) {
+          // Open shadow root only — a closed root's `shadowRoot` is null (skipped).
+          if (el.shadowRoot) walk(el.shadowRoot);
+          // Same-origin iframe only — cross-origin `contentDocument` access throws.
+          if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+            let doc = null;
+            try { doc = el.contentDocument; } catch (e) { doc = null; }
+            if (doc) walk(doc);
+          }
+        }
+      };
+      walk(document);
+    };
+    // A shadow/iframe-piercing single-element lookup: return the FIRST element
+    // matching `sel` across all reachable roots, or null. Used to RE-FIND a
+    // `[data-gh-ref]`/`[data-gh-find]` node stamped inside a shadow root — a plain
+    // `document.querySelector` would miss it and falsely report it stale.
+    const ghQuery = (sel) => {
+      let hit = null;
+      ghForEachRoot((root) => {
+        if (hit) return;
+        let m = null;
+        try { m = root.querySelector(sel); } catch (e) { m = null; }
+        if (m) hit = m;
+      });
+      return hit;
+    };
+    // Clear EVERY `[data-gh-ref]` across all reachable roots so a re-read's ref
+    // numbering can't collide with a prior read's stamps left in a shadow/iframe.
+    const ghClearRefs = () => {
+      ghForEachRoot((root) => {
+        let stamped;
+        try { stamped = root.querySelectorAll('[data-gh-ref]'); } catch (e) { stamped = []; }
+        for (const el of stamped) el.removeAttribute('data-gh-ref');
+      });
+    };
+    """
+
+    /// The per-element row builder shared by the page and scoped digests: given
+    /// `el` and the running counter object `ctx` (`{n}`), derive the role, accessible
+    /// name, ref (stamped on interactive elements only), value, and form-control
+    /// state, and push one `{role,name,value,…,x,y,w,h}` row onto `out`. Factored out
+    /// so the page digest, the scoped digest, AND the shadow/iframe descent all emit
+    /// IDENTICALLY-shaped rows from ONE definition (no drift between paths).
+    static let collectRowJS = """
+    const ghCollectRow = (el, out, ctx, interactive) => {
+      const r = el.getBoundingClientRect();
+      const tag = el.tagName.toLowerCase();
+      const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
+      // Role: an explicit aria role wins; else the tag — but an <input> is
+      // refined by its type so a checkbox/radio reads as one (not a text field).
+      let role = el.getAttribute('role');
+      if (!role) {
+        role = (tag === 'input')
+          ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
+          : tag;
+      }
+      const name = accName(el, tag);
+      // Stamp a shared ref on INTERACTIVE elements only (headings are read for
+      // context, never clicked). The attribute IS the persistent ref store: it
+      // lives in the browser's DOM across separate CLI processes, and its
+      // absence after a nav/re-render is the honest staleness signal.
+      let ref = '';
+      if (interactive.includes(tag)) { ref = 'e' + (++ctx.n); el.setAttribute('data-gh-ref', ref); }
+      // Form-control STATE (issue #8). A checkbox/radio's signal is `checked`,
+      // NOT its meaningless default value "on" — so we emit checked and leave
+      // value empty for those. A <select> reports its chosen option's text.
+      let value = '', checked = null, selected = null, expanded = null;
+      if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
+        checked = !!el.checked;
+      } else if (tag === 'select') {
+        const o = el.options && el.options[el.selectedIndex];
+        selected = o ? (o.text || o.value || '') : '';
+        value = (el.value || '').slice(0, 200);
+      } else {
+        value = (el.value || '').slice(0, 200);
+      }
+      const axExp = el.getAttribute && el.getAttribute('aria-expanded');
+      if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
+      const disabled = !!el.disabled;
+      out.push({ ref, role, name, value, checked, selected, expanded, disabled,
+                 x: r.x, y: r.y, w: r.width, h: r.height });
+    };
+    """
+
     /// The DOM-digest expression evaluated in the page. Collects interactive +
-    /// text nodes with their accessible name, value, and bounding box. Kept small
-    /// and `returnByValue`-friendly. (Slice 1 keeps this minimal; Slice 2+ grows
-    /// the ref/snapshot model.)
+    /// text nodes with their accessible name, value, and bounding box across the
+    /// document AND every OPEN shadow root / SAME-ORIGIN iframe (via `ghForEachRoot`),
+    /// so a control inside a web component or a same-origin frame is surfaced rather
+    /// than invisible. Kept `returnByValue`-friendly.
     public static let evaluateExpression = """
     (() => {
-      // Clear any `data-gh-ref` from a PRIOR read first: refs are valid only until
-      // the next read or a navigation, so a re-read SUPERSEDES — old handles must
-      // not linger and collide with the new numbering.
-      for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
       \(accNameJS)
+      \(shadowPierceJS)
+      \(collectRowJS)
+      // Clear any `data-gh-ref` from a PRIOR read first (across ALL roots): refs are
+      // valid only until the next read or a navigation, so a re-read SUPERSEDES — old
+      // handles must not linger and collide with the new numbering.
+      ghClearRefs();
       const out = [];
       const interactive = ['a','button','input','select','textarea'];
       const text = ['h1','h2','h3','h4','h5','h6'];
-      const wanted = interactive.concat(text);
-      let n = 0;
-      for (const el of document.querySelectorAll(wanted.join(','))) {
-        const r = el.getBoundingClientRect();
-        const tag = el.tagName.toLowerCase();
-        const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
-        // Role: an explicit aria role wins; else the tag — but an <input> is
-        // refined by its type so a checkbox/radio reads as one (not a text field).
-        let role = el.getAttribute('role');
-        if (!role) {
-          role = (tag === 'input')
-            ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
-            : tag;
-        }
-        const name = accName(el, tag);
-        // Stamp a shared ref on INTERACTIVE elements only (headings are read for
-        // context, never clicked). The attribute IS the persistent ref store: it
-        // lives in the browser's DOM across separate CLI processes, and its
-        // absence after a nav/re-render is the honest staleness signal.
-        let ref = '';
-        if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
-        // Form-control STATE (issue #8). A checkbox/radio's signal is `checked`,
-        // NOT its meaningless default value "on" — so we emit checked and leave
-        // value empty for those. A <select> reports its chosen option's text.
-        let value = '', checked = null, selected = null, expanded = null;
-        if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
-          checked = !!el.checked;
-        } else if (tag === 'select') {
-          const o = el.options && el.options[el.selectedIndex];
-          selected = o ? (o.text || o.value || '') : '';
-          value = (el.value || '').slice(0, 200);
-        } else {
-          value = (el.value || '').slice(0, 200);
-        }
-        const axExp = el.getAttribute && el.getAttribute('aria-expanded');
-        if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
-        const disabled = !!el.disabled;
-        out.push({ ref, role, name, value, checked, selected, expanded, disabled,
-                   x: r.x, y: r.y, w: r.width, h: r.height });
-      }
+      const wanted = interactive.concat(text).join(',');
+      const ctx = { n: 0 };
+      ghForEachRoot((root) => {
+        let els;
+        try { els = root.querySelectorAll(wanted); } catch (e) { els = []; }
+        for (const el of els) ghCollectRow(el, out, ctx, interactive);
+      });
       return out;
     })()
     """
 
     /// The SCOPED digest expression (`web read --in <css>`, issue #11): the same
     /// per-element collection as `evaluateExpression`, but rooted at the first
-    /// element matching `container` instead of the whole document. Returns
-    /// `{ found, rows }` so the caller can REFUSE honestly when the container
+    /// element matching `container` instead of the whole document. The container
+    /// itself is resolved PIERCING shadow roots / same-origin iframes (so a scope
+    /// living inside a web component is reachable), and the collection then descends
+    /// into any open shadow roots / same-origin iframes WITHIN that container too.
+    /// Returns `{ found, rows }` so the caller can REFUSE honestly when the container
     /// selector matches nothing (vs an honest empty digest for a present-but-empty
     /// container). Refs are still stamped (so you can click within the scope).
     public static func scopedEvaluateExpression(container: String) -> String {
         let sel = WebActuate.jsonStringLiteral(container)
         return """
         (() => {
-          let root;
-          try { root = document.querySelector(\(sel)); } catch (e) { root = null; }
-          if (!root) return { found: false };
-          for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
           \(accNameJS)
+          \(shadowPierceJS)
+          \(collectRowJS)
+          const root = ghQuery(\(sel));
+          if (!root) return { found: false };
+          ghClearRefs();
           const out = [];
           const interactive = ['a','button','input','select','textarea'];
           const text = ['h1','h2','h3','h4','h5','h6'];
-          const wanted = interactive.concat(text);
-          let n = 0;
-          for (const el of root.querySelectorAll(wanted.join(','))) {
-            const r = el.getBoundingClientRect();
-            const tag = el.tagName.toLowerCase();
-            const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
-            let role = el.getAttribute('role');
-            if (!role) {
-              role = (tag === 'input')
-                ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
-                : tag;
+          const wanted = interactive.concat(text).join(',');
+          const ctx = { n: 0 };
+          // Walk the container's own subtree, then descend into any open shadow
+          // roots / same-origin iframes nested anywhere under it.
+          const seen = new Set();
+          const visit = (node) => {
+            if (!node || seen.has(node)) return;
+            seen.add(node);
+            let els;
+            try { els = node.querySelectorAll(wanted); } catch (e) { els = []; }
+            for (const el of els) ghCollectRow(el, out, ctx, interactive);
+            let all;
+            try { all = node.querySelectorAll('*'); } catch (e) { all = []; }
+            for (const el of all) {
+              if (el.shadowRoot) visit(el.shadowRoot);
+              if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+                let doc = null;
+                try { doc = el.contentDocument; } catch (e) { doc = null; }
+                if (doc) visit(doc);
+              }
             }
-            const name = accName(el, tag);
-            let ref = '';
-            if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
-            let value = '', checked = null, selected = null, expanded = null;
-            if (tag === 'input' && (type === 'checkbox' || type === 'radio')) {
-              checked = !!el.checked;
-            } else if (tag === 'select') {
-              const o = el.options && el.options[el.selectedIndex];
-              selected = o ? (o.text || o.value || '') : '';
-              value = (el.value || '').slice(0, 200);
-            } else {
-              value = (el.value || '').slice(0, 200);
-            }
-            const axExp = el.getAttribute && el.getAttribute('aria-expanded');
-            if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
-            const disabled = !!el.disabled;
-            out.push({ ref, role, name, value, checked, selected, expanded, disabled,
-                       x: r.x, y: r.y, w: r.width, h: r.height });
-          }
+          };
+          visit(root);
           return { found: true, rows: out };
         })()
         """
@@ -1088,6 +1171,11 @@ extension GhostHands {
         // ONE occlusion + geometry probe, returned by value, decided PURELY.
         let probe = try await evaluateObject(
             session, WebActuate.probeExpression(selector: resolved.selector))
+        // An iframe-hosted target can't be clicked via top-level dispatch coords
+        // (its box is iframe-relative) — refuse rather than click the wrong point.
+        if WebActuate.isInFrame(from: probe) {
+            throw GhostHandsError.iframeClickUnsupported(selector: selector)
+        }
         switch WebActuate.clickDecision(from: probe) {
         case .notFound:
             // A ref that matches nothing = the stamped element moved → stale, not a
@@ -1342,6 +1430,9 @@ extension GhostHands {
         // Act on the stamped pick through the SAME occlusion + verify path.
         let probe = try await evaluateObject(
             session, WebActuate.probeExpression(selector: WebFind.pickSelector))
+        if WebActuate.isInFrame(from: probe) {
+            throw GhostHandsError.iframeClickUnsupported(selector: label.label)
+        }
         switch WebActuate.clickDecision(from: probe) {
         case .notFound:
             // The pick vanished between resolve and act (a re-render) — honest refuse.
@@ -1564,7 +1655,8 @@ extension GhostHands {
         let textJSON = WebActuate.jsonStringLiteral(text)
         let expression = """
         (() => {
-          const el = document.querySelector(\(selJSON));
+          \(CDPDigest.shadowPierceJS)
+          const el = ghQuery(\(selJSON));   // pierce shadow roots / same-origin iframes
           if (!el) return null;
           el.focus();
           el.value = \(textJSON);
