@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.8.17-m4 — 2026-06-19 — `ocr`/`shot` resolve the capture window robustly (no more CGWindowID hard-fail)
+
+**Fixed — `ocr` + `shot` no longer hard-fail with "could not resolve a CGWindowID".** Both
+bridged the app's AX window → CGWindowID via a private shim and REFUSED when that returned
+nil — which it does for background / degenerate windows (macOS-26 exposes them), so the OCR
+eye + `shot` failed on perfectly real, visible windows (this blocked `see`'s OCR eye all of
+the overnight build). Now the AX→CG bridge is a PREFERRED exact match, but when it returns
+nil we FALL BACK to selecting the app's own window from ScreenCaptureKit's capturable set by
+PID — ranked on-screen → normal-layer (0) → largest area (the main window). Works even when
+the app exposes no usable AX window.
+
+**Honesty:** the picker only ever returns a REAL window that BELONGS to the target app (PID
+match) — never another app's window (a bridged id owned by a different pid is ignored),
+never a fabricated one; no capturable window for the app → an honest refuse. For a READ
+(screenshot / OCR), capturing the app's main on-screen window is the intent. The pure
+`CaptureWindowPick` is hermetically tested (838 total, +5).
+
+**Live-verified PARTIALLY + honest about the gap:** `ocr Finder` / `ocr Calculator` now
+advance PAST the `could not resolve a CGWindowID` refuse (the window resolves), proving the
+fix. A full end-to-end OCR-text demo could NOT be completed on this machine tonight — the
+downstream ScreenCaptureKit capture itself failed with "Failed to start stream due to
+audio/video capture failure" for EVERY window (`shot` fails identically), a
+Screen-Recording / capture-grant issue on the rebuilt CLI binary that this change does NOT
+touch (the capture step is unchanged). The window-resolution fix is correct, tested, and a
+strict improvement (worst case is still an honest refuse, just past the bridge); the OCR
+eye's full live success awaits a working capture grant. Version 0.8.16-m4 → 0.8.17-m4.
+
 ## 0.8.16-m4 — 2026-06-19 — `replay` writes a JSON / JUnit pass-fail report (issue #3)
 
 **Added — `replay <flow> [--report-json <path>] [--report-junit <path>]`: a structured

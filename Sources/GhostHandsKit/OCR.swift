@@ -91,17 +91,25 @@ extension GhostHands {
             throw GhostHandsError.screenRecordingNotTrusted
         }
         let target = try Target.resolve(appSpec)
-        guard let axWindow = (target.element.windows() ?? []).first else {
-            throw GhostHandsError.noWindows(app: target.name)
-        }
-        guard let cgWindowID = AXWindowResolver().windowID(from: axWindow) else {
-            throw GhostHandsError.captureFailed(reason: "could not resolve a CGWindowID")
-        }
+        // The AX→CGWindowID bridge is a best-effort EXACT match; nil is fine — we
+        // fall back to PID-matched window selection, so OCR works on windows whose
+        // AX bridge fails (background / degenerate windows).
+        let preferred = (target.element.windows() ?? []).first
+            .flatMap { AXWindowResolver().windowID(from: $0) }
         let content: SCShareableContent
         do { content = try await SCShareableContent.current }
         catch { throw GhostHandsError.screenRecordingNotTrusted }
-        guard let scWindow = content.windows.first(where: { $0.windowID == cgWindowID }) else {
-            throw GhostHandsError.captureFailed(reason: "window not in the capturable set")
+        let candidates = content.windows.map {
+            CaptureCandidate(windowID: $0.windowID,
+                             pid: $0.owningApplication?.processID ?? -1,
+                             area: Double($0.frame.width * $0.frame.height),
+                             layer: $0.windowLayer, onScreen: $0.isOnScreen)
+        }
+        guard let chosenID = CaptureWindowPick.choose(
+                candidates, pid: target.pid, preferred: preferred),
+              let scWindow = content.windows.first(where: { $0.windowID == chosenID }) else {
+            throw GhostHandsError.captureFailed(
+                reason: "no capturable window for \(target.name)")
         }
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
         let config = SCStreamConfiguration()

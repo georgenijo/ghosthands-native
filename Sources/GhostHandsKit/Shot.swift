@@ -161,12 +161,11 @@ extension GhostHands {
         let axWindow = windows[0]
 
         // Bridge the AX window to a CGWindowID via the MIT dependency's private
-        // _AXUIElementGetWindow shim, then to an SCWindow for a window-scoped,
-        // desktop-independent capture (no other window's pixels bleed in).
-        let resolver = AXWindowResolver()
-        guard let cgWindowID = resolver.windowID(from: axWindow) else {
-            throw GhostHandsError.captureFailed(reason: "could not resolve a CGWindowID for the window")
-        }
+        // _AXUIElementGetWindow shim — a PREFERRED exact match. When the bridge
+        // returns nil (background / degenerate windows) we DON'T refuse; we fall
+        // back to PID-matched window selection from the capturable set, so `shot`
+        // captures the app's real on-screen window instead of failing.
+        let preferred = AXWindowResolver().windowID(from: axWindow)
 
         let content: SCShareableContent
         do {
@@ -176,8 +175,17 @@ extension GhostHands {
             // a second honest failure point.
             throw GhostHandsError.screenRecordingNotTrusted
         }
-        guard let scWindow = content.windows.first(where: { $0.windowID == cgWindowID }) else {
-            throw GhostHandsError.captureFailed(reason: "window not present in the capturable set")
+        let candidates = content.windows.map {
+            CaptureCandidate(windowID: $0.windowID,
+                             pid: $0.owningApplication?.processID ?? -1,
+                             area: Double($0.frame.width * $0.frame.height),
+                             layer: $0.windowLayer, onScreen: $0.isOnScreen)
+        }
+        guard let chosenID = CaptureWindowPick.choose(
+                candidates, pid: target.pid, preferred: preferred),
+              let scWindow = content.windows.first(where: { $0.windowID == chosenID }) else {
+            throw GhostHandsError.captureFailed(
+                reason: "no capturable window for \(target.name)")
         }
 
         let filter = SCContentFilter(desktopIndependentWindow: scWindow)
