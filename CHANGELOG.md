@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.5-m4 — 2026-06-19 — highlight on EVERY act verb
+
+**Extended `GHOSTHANDS_HIGHLIGHT=1` from `click` to every native act verb.** Now the
+overlay box flashes wherever ghosthands acts: `click`, `type`, `set-value`,
+`doubleclick`, `act`, `focus`, `right-click`, `menu` (each item as it descends — the
+boxes walk down the menu), `scroll` (the scroll area), and `drag` (source then
+destination). Done via a shared `Highlight.flashIfEnabled(element)` called right
+before each actuation; gated by the env var, so off = zero cost everywhere. Verbs
+with no target element (`key`, `navigate`) and the CDP web verbs (page coords, not
+screen) are intentionally not wired. Live-verified: a highlighted Calculator
+sequence (keypad clicks + a `View > Basic` menu walk) flashed a box on every step
+with no cursor move / focus steal. Version 0.8.4-m4 → 0.8.5-m4.
+
 ## 0.8.4-m4 — 2026-06-19 — see-where-it-acts (opt-in visual overlay)
 
 **Added — `GHOSTHANDS_HIGHLIGHT=1`: a visual overlay so a human can SEE where

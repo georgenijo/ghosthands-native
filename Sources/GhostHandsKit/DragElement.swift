@@ -218,6 +218,14 @@ extension GhostHands {
         // stale handle we already aimed at.
         let fromIdentity = NameMatch.stableIdentityKey(fromFacts)
 
+        // OPT-IN observability: flash the source then the destination so a human
+        // SEES the drag's endpoints (no cursor move in invisible mode; the boxes are
+        // overlays). Off by default = zero cost.
+        if Highlight.isEnabled {
+            Highlight.flash(fromFrame)
+            Highlight.flash(toFrame)
+        }
+
         // DISPATCH the drag: down at from-center, interpolated drags to to-center,
         // up at to-center. `.invisible` posts straight to the target pid
         // (cursor-less); `.visible` warps the real cursor and posts via the HID tap.

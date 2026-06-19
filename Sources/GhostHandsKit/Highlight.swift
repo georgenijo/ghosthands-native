@@ -1,4 +1,5 @@
 import AppKit
+import AXorcist
 import Foundation
 
 // An OPT-IN visual overlay: flash a highlight box at the on-screen frame of the
@@ -79,5 +80,15 @@ public enum Highlight {
         }
         RunLoop.current.run(until: Date().addingTimeInterval(0.32))
         panel.orderOut(nil)
+    }
+
+    /// Convenience for the act verbs: when highlighting is enabled and the element
+    /// exposes a readable frame, flash it. A no-op otherwise (off, or no frame — we
+    /// never fabricate a box). Call right before the actuation so the box marks the
+    /// control about to be driven.
+    @MainActor
+    public static func flashIfEnabled(_ element: Element) {
+        guard isEnabled, let frame = element.frame() else { return }
+        flash(frame)
     }
 }

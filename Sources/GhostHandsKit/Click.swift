@@ -184,9 +184,7 @@ extension GhostHands {
         // OPT-IN observability (GHOSTHANDS_HIGHLIGHT=1): flash a box at the target's
         // on-screen frame just before pressing, so a human SEES where we act. Pure
         // overlay — no cursor move, no focus steal; off by default = zero cost.
-        if Highlight.isEnabled, let frame = element.frame() {
-            Highlight.flash(frame)
-        }
+        Highlight.flashIfEnabled(element)
 
         guard element.press() else {
             throw GhostHandsError.actionRejected(name: name, action: "AXPress")

@@ -121,6 +121,7 @@ extension GhostHands {
                     name: segment, candidates: idxs.map { titles[$0] })
             case let .one(idx):
                 let item = levelItems[idx]
+                Highlight.flashIfEnabled(item)
                 do { _ = try item.performAction("AXPress") }
                 catch {
                     closeOpened()

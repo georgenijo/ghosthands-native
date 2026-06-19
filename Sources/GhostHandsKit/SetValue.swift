@@ -166,6 +166,7 @@ extension GhostHands {
         // DISPATCH. setValue==false means AX rejected outright → REFUSE. A `true`
         // here is ONLY a dispatch — it is the read-back below, not this boolean,
         // that may promote the result to VERIFIED.
+        Highlight.flashIfEnabled(element)
         guard element.setValue(setArg, forAttribute: AXAttributeNames.kAXValueAttribute) else {
             throw GhostHandsError.actionRejected(name: name, action: "AXValue set")
         }

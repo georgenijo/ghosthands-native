@@ -116,6 +116,7 @@ extension GhostHands {
         guard let area = try resolveScrollArea(named: named, target: target) else {
             throw GhostHandsError.noScrollArea(app: target.name, named: named)
         }
+        Highlight.flashIfEnabled(area)
         let containerLabel = scrollAreaLabel(area)
         // Identity of the container we WITNESS, so the after-read can prove it
         // re-resolved to the SAME area (never quote a cross-container delta).
