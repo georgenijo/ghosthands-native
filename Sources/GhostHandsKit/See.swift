@@ -291,12 +291,19 @@ public struct SeeSnapshot: Codable, Sendable, Equatable {
     /// rather than acting on a stale AX identity. Nil only for older snapshots.
     public var pid: Int32?
     public var port: Int?
+    /// The stable DevTools target id of the CDP renderer `see` read (nil for an
+    /// AX-only / native see). `act` pins CDP `@ref` reattach to this exact target so
+    /// a ref stamped on a non-default page (multi-window Electron / `see --target N`)
+    /// is found there, not falsely refused as stale on page 0.
+    public var cdpTargetId: String?
     public var records: [SeeRecord]
 
-    public init(app: String, pid: Int32? = nil, port: Int?, records: [SeeRecord]) {
+    public init(app: String, pid: Int32? = nil, port: Int?,
+                cdpTargetId: String? = nil, records: [SeeRecord]) {
         self.app = app
         self.pid = pid
         self.port = port
+        self.cdpTargetId = cdpTargetId
         self.records = records
     }
 

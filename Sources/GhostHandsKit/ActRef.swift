@@ -184,14 +184,15 @@ extension GhostHands {
         case .hand(.cdpClick):
             let o = try await webClick(
                 selector: record.cdpRef!, browser: target.name, lens: .auto,
-                debugPort: snapshot?.port ?? 9222)
+                debugPort: snapshot?.port ?? 9222, pick: cdpPick(snapshot))
             return result(record, ref: ref, app: target.name, tier: ActHand.cdpClick,
                           verified: o.verified, evidence: verdictText(o.verdict))
 
         case .hand(.cdpType):
             let o = try await webType(
                 selector: record.cdpRef!, text: typeText!, submit: submit,
-                browser: target.name, lens: .auto, debugPort: snapshot?.port ?? 9222)
+                browser: target.name, lens: .auto, debugPort: snapshot?.port ?? 9222,
+                pick: cdpPick(snapshot))
             return result(record, ref: ref, app: target.name, tier: ActHand.cdpType,
                           verified: o.verified, evidence: verdictText(o.verdict))
 
@@ -215,6 +216,14 @@ extension GhostHands {
         RefActResult(ref: ref, app: app, source: record.source, tier: tier.rawValue,
                      role: record.role, name: record.name, verified: verified,
                      evidence: evidence)
+    }
+
+    /// The CDP renderer to reattach to: the EXACT target id `see` pinned, so a
+    /// `@ref` stamped on a non-default page (multi-window Electron / `see --target N`)
+    /// is found on its own renderer rather than falsely refused as stale on page 0.
+    /// Nil (older snapshot / single-page) → the historical first-page default.
+    private static func cdpPick(_ snapshot: SeeSnapshot?) -> CDPTargetPick.Selector? {
+        snapshot?.cdpTargetId.map { .id($0) }
     }
 
     /// Flatten a `WebActuate.Verdict` to (verified flag already read) its text.

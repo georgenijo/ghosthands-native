@@ -95,6 +95,7 @@ extension GhostHands {
         // UNRELATED browser's page into this app's view (a fabrication).
         var cdpInputs: [SeeInput] = []
         var usedPort: Int?
+        var usedTargetId: String?
         var candidatePort = debugPort
         if candidatePort == nil,
            WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier) {
@@ -104,6 +105,7 @@ extension GhostHands {
             do {
                 let result = try await webReadCDP(target: target, port: p, pick: pick)
                 usedPort = p
+                usedTargetId = result.cdpTargetId   // pin act's reattach to this renderer
                 for e in result.entries {
                     let name = SnapshotRender.displayName(e.facts) ?? ""
                     cdpInputs.append(SeeInput(
@@ -145,6 +147,7 @@ extension GhostHands {
 
         // --- persist the ref→record map for `act "@ref"` ---
         let snap = SeeSnapshot(app: target.name, pid: target.pid, port: usedPort,
+                               cdpTargetId: usedTargetId,
                                records: rows.map(SeeRecord.init(row:)))
         if !SeeStore.save(snap) {
             notes.append("warning: could not persist the see snapshot — `act @ref` "

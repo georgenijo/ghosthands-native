@@ -203,6 +203,16 @@ final class CDPKeySpecTests: XCTestCase {
         XCTAssertNil(CDPTargetPick.choose(sampleTargets(), .match("nonsuch")))
     }
 
+    func testChooseByExactId() {
+        // The id arm pins act's reattach to the EXACT renderer see read (F1).
+        let c = CDPTargetPick.choose(sampleTargets(), .id("c"))
+        XCTAssertEqual(c?.target.id, "c")
+        XCTAssertEqual(c?.matchCount, 1)
+        // A non-debuggable id ("b" has empty ws) or an absent id → nil (caller refuses).
+        XCTAssertNil(CDPTargetPick.choose(sampleTargets(), .id("b")))
+        XCTAssertNil(CDPTargetPick.choose(sampleTargets(), .id("nonsuch")))
+    }
+
     func testChooseEmptyPagesIsNil() {
         // A list with NO debuggable page → nil regardless of selector.
         let none = [t("x", title: "DevTools", url: "devtools://x", ws: "")]

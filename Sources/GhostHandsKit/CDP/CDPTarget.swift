@@ -131,6 +131,10 @@ public enum CDPTargetPick {
     public enum Selector: Sendable, Equatable {
         case index(Int)
         case match(String)
+        /// An EXACT DevTools target id — the stable handle `see` persists so `act`
+        /// reattaches to the identical renderer (not a fuzzy title/index that could
+        /// drift). No match → nil (the caller refuses).
+        case id(String)
     }
 
     /// The chosen page plus the reporting facts a `--target` pick surfaces (a pick
@@ -182,6 +186,9 @@ public enum CDPTargetPick {
             let count = pages.filter(hit).count
             guard let i = pages.firstIndex(where: hit) else { return nil }
             return Choice(target: pages[i], index: i + 1, matchCount: count)
+        case let .id(wanted):
+            guard let i = pages.firstIndex(where: { $0.id == wanted }) else { return nil }
+            return Choice(target: pages[i], index: i + 1, matchCount: 1)
         }
     }
 

@@ -668,6 +668,19 @@ extension GhostHands {
         /// present). False means no page surface was found — the CLI reports
         /// that honestly rather than a bare empty digest.
         public let hasWebArea: Bool
+        /// The stable DevTools target id of the CDP page this read served (nil for
+        /// the AX path / no page). `see` persists it so `act "@ref"` reattaches to
+        /// the SAME renderer — otherwise a `@ref` stamped on a non-default page would
+        /// be unfindable on page 0 and falsely refuse as stale.
+        public let cdpTargetId: String?
+
+        public init(app: String, entries: [WebDigest.Entry], hasWebArea: Bool,
+                    cdpTargetId: String? = nil) {
+            self.app = app
+            self.entries = entries
+            self.hasWebArea = hasWebArea
+            self.cdpTargetId = cdpTargetId
+        }
     }
 
     /// Read the browser's focused page as a web-scoped digest — chrome stripped,
@@ -910,8 +923,10 @@ extension GhostHands {
         let rows = evaluateRows(from: result)
         let entries = CDPDigest.entries(fromEvaluate: rows)
         // A reachable CDP page IS a web surface (hasWebArea = true), so the CLI
-        // footer reports element count rather than "no page".
-        return WebReadResult(app: target.name, entries: entries, hasWebArea: true)
+        // footer reports element count rather than "no page". Carry the chosen
+        // target's id so `see` can pin `act "@ref"` to this exact renderer.
+        return WebReadResult(app: target.name, entries: entries, hasWebArea: true,
+                             cdpTargetId: choice.target.id)
     }
 
     /// `web read --in <css>` (issue #11) — the page digest SCOPED to a container.
@@ -1032,6 +1047,7 @@ extension GhostHands {
         case .none:             return ""
         case let .index(n):     return "#\(n)"
         case let .match(q):     return q
+        case let .id(t):        return "id:\(t)"
         }
     }
 

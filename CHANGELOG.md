@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.14-m4 — 2026-06-19 — `act "@ref"` pins the CDP renderer `see` read (A3 follow-up)
+
+**Fixed — a CDP `@ref` from a non-default renderer is now actionable.** A3's adversarial
+review flagged it: `see --target N` (or any multi-window Electron app) reads a SPECIFIC CDP
+page and stamps `@eN` on its DOM, but `act "@ref"` reattached to page 0 (`pick: nil`), where
+the ref's `data-gh-ref` doesn't exist → it falsely refused as stale. Now `see` persists the
+**stable DevTools target id** of the renderer it read (`SeeSnapshot.cdpTargetId`, carried out
+of `webReadCDP` via `WebReadResult.cdpTargetId`), and `act`'s CDP arms reattach by that exact
+id (a new `CDPTargetPick.id` selector — exact match, no fuzzy drift). So a ref stamped on a
+non-default page is found on its own renderer.
+
+**Honesty:** purely renderer-PINNING — the verdict logic is untouched (no new success path),
+the no-target/single-page default is byte-identical (`pick: nil` → first page), and if the
+pinned target is gone (page closed) `choose(.id)` returns nil → an honest `cdpTargetNotFound`
+refuse ("re-see"), never the wrong page. Pure `choose(.id)` + the snapshot round-trip are
+hermetically tested (814 total, +1); live-verified end-to-end (`see` recorded the target id;
+`act "@ref"` reattached via it and verified by navigation). Closes the A3 known limitation.
+
 ## 0.8.13-m4 — 2026-06-19 — `web click` earns VERIFIED on in-page toggles (issue #6)
 
 **Added — `web click` post-click DOM read-back: an in-page (non-navigating) click can now

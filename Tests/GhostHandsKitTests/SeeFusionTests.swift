@@ -204,7 +204,8 @@ final class SeeFusionTests: XCTestCase {
     }
 
     func testSnapshotCodableAndLookup() throws {
-        let snap = SeeSnapshot(app: "Cursor", pid: 4242, port: 9333, records: [
+        let snap = SeeSnapshot(app: "Cursor", pid: 4242, port: 9333,
+                               cdpTargetId: "TARGET-ABC", records: [
             SeeRecord(row: SeeRow(ref: "@1", source: .cdp, role: "div", name: "Agent",
                                   rect: nil, interactive: true, cdpRef: "@e1")),
         ])
@@ -212,6 +213,7 @@ final class SeeFusionTests: XCTestCase {
         let back = try JSONDecoder().decode(SeeSnapshot.self, from: data)
         XCTAssertEqual(back, snap)
         XCTAssertEqual(back.pid, 4242)                // pid persists for A3 staleness
+        XCTAssertEqual(back.cdpTargetId, "TARGET-ABC")  // F1: pin act's reattach renderer
         XCTAssertEqual(back.record(for: "@1")?.cdpRef, "@e1")
         XCTAssertNil(back.record(for: "@99"))         // missing ref → nil (caller re-sees)
     }
