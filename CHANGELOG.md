@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.8.1-m4 — 2026-06-19 — web-parity level-up
+
+A fresh agent-browser-vs-ghosthands head-to-head (full 11-task battery, both driven
+directly) re-confirmed the win on capability + honesty + native reach, and surfaced
+two concrete web-driving gaps + one stale doc claim. All three closed; 711 hermetic
+tests (+9), each fix live-verified on the exact case that exposed it.
+
+**Fixed**
+- **`web read` was hiding fillable text inputs.** A render-side filter dropped any
+  digest row with no name, no value, and no form-state — which silently killed a
+  bare or `<label>`-wrapped text input that reads empty pre-fill (httpbin's
+  `custname`/`custtel`/`custemail`). The element *was* ref-stamped and fully
+  fillable; it just never appeared in `web read`, forcing a hand-written CSS
+  selector. Now any **ref-stamped (interactive) row is KEPT** even when empty — a
+  ref means actionable, never noise; a ref-less empty text/heading node still drops.
+  *Live-verified:* httpbin `web read` went 8 → **13 elements**, every field present.
+- **`web read` now derives a real accessible NAME for label-wrapped controls.** The
+  name was `aria-label || innerText` only, so a `<label>Customer name: <input></label>`
+  read blank. Added `accName()` — `aria-label` → `<label for=id>` → wrapping
+  `<label>` → innerText → `placeholder` → `name` attr (all REAL sources, never
+  fabricated; every lookup guarded). httpbin inputs now read `"Customer name:"`,
+  radios/checkboxes read `"Small"`/`"Bacon"` instead of blank — matching a screen
+  reader and agent-browser's snapshot, so the whole form is addressable by `@eN`.
+
+**Added**
+- **`web select "<@eN|selector>" "<value>" [browser]`** — drive a `<select>`
+  dropdown, the web analogue of `set-value`. Matches an option by its **value OR its
+  visible text**, sets it, fires input+change, and **reads the chosen option back**:
+  read-back == request → **VERIFIED**; the set didn't stick → dispatched-unverified;
+  the target isn't a `<select>` → **REFUSE** (`notASelect`, names the real role); no
+  option matches → **REFUSE** (`optionNotFound`, lists the real options) — never
+  leaves the prior selection and claims success. Exposed on the CLI **and** as the
+  32nd MCP tool (`web_select`). Closes the last "drop to `web eval` for a dropdown"
+  gap. *Live-verified* on the-internet/dropdown: by value (`"2"`→"Option 2"), by
+  text (`"Option 1"`), by `@ref`, and both refuse paths (exit 1).
+
+**Docs**
+- Corrected the **stale "agent-browser can't play YouTube/DRM" claim** in
+  WEB-PARITY.md + STRESS-TEST-0.8.0.md. On the 2026-06-19 re-test (agent-browser
+  0.27.0) YouTube **played** (`currentTime` advanced after a user-gesture click;
+  bare `.play()` is blocked by autoplay policy, not codecs). It is no longer a
+  ghosthands advantage; the native-app gap is the only durable structural miss.
+
 ## 0.8.0-m4 — 2026-06-18 (overnight build)
 
 The big completeness push — a production-grade, honest, invisible computer-use +

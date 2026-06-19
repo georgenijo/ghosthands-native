@@ -428,6 +428,20 @@ public enum MCPTools {
              ],
              required: ["selector", "text", "browser"]),
 
+        Tool(name: "web_select",
+             description: "Choose a <select> dropdown option by its value OR visible text "
+                 + "(CDP only), then read the selected option back. Verified only when the "
+                 + "read-back matches; refuses if the target isn't a <select> or no option "
+                 + "matches (lists the real options). Accepts an @eN ref or a CSS selector.",
+             properties: [
+                 Property(name: "selector", type: "string",
+                          description: "an @eN ref or CSS selector for the <select>"),
+                 Property(name: "value", type: "string",
+                          description: "the option's value or visible text to choose"),
+                 browserProp, debugPortProp, relaunchProp,
+             ],
+             required: ["selector", "value", "browser"]),
+
         Tool(name: "web_html",
              description: "Read a CSS-selected element's outerHTML + attributes + key computed "
                  + "styles (CDP only). Pure read.",

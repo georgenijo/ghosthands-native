@@ -121,7 +121,7 @@ final class MCPTests: XCTestCase {
         // windows
         "windows", "window_move", "window_resize", "window_raise",
         // web
-        "web_read", "web_tabs", "web_click", "web_fill", "web_html", "web_eval",
+        "web_read", "web_tabs", "web_click", "web_fill", "web_select", "web_html", "web_eval",
     ]
 
     func testToolsListAdvertisesTheFullVerbSurface() {

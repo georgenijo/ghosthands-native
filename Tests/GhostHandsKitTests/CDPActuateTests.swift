@@ -148,7 +148,74 @@ final class CDPActuateTests: XCTestCase {
         }
     }
 
+    // MARK: - selectVerdict (read-back option == request → verified)
+
+    /// The selected option's VALUE matches the request → VERIFIED.
+    func testSelectVerdictMatchByValueVerified() {
+        let v = WebActuate.selectVerdict(intended: "2", selectedValue: "2",
+                                         selectedText: "Option 2")
+        guard case let .verified(evidence) = v else { return XCTFail("expected verified") }
+        XCTAssertTrue(evidence.contains("Option 2"))
+        XCTAssertTrue(evidence.contains("value=2"))
+    }
+
+    /// The caller passed the VISIBLE TEXT; the read-back text matches → VERIFIED
+    /// (value differs from the request, but the text proves the right option).
+    func testSelectVerdictMatchByTextVerified() {
+        let v = WebActuate.selectVerdict(intended: "Option 2", selectedValue: "2",
+                                         selectedText: "Option 2")
+        guard case .verified = v else { return XCTFail("expected verified") }
+    }
+
+    /// The set didn't stick — the read-back option is neither the requested value
+    /// nor text → dispatched-unverified, NEVER a faked success.
+    func testSelectVerdictMismatchDispatched() {
+        let v = WebActuate.selectVerdict(intended: "2", selectedValue: "1",
+                                         selectedText: "Option 1")
+        guard case let .dispatchedUnverified(reason) = v else {
+            return XCTFail("expected dispatchedUnverified")
+        }
+        XCTAssertTrue(reason.lowercased().contains("unverified"))
+    }
+
+    /// Read-back is trimmed before comparison — surrounding whitespace on the option
+    /// text doesn't sink an otherwise-correct selection.
+    func testSelectVerdictTrimsReadback() {
+        let v = WebActuate.selectVerdict(intended: "Large", selectedValue: "lg",
+                                         selectedText: "  Large  ")
+        guard case .verified = v else { return XCTFail("expected verified") }
+    }
+
+    /// The select expression embeds BOTH the selector and the request as JSON string
+    /// literals (never trusted as code) and reads the chosen option back.
+    func testSelectExpressionEscapesInputs() {
+        let exp = WebActuate.selectExpression(selector: "#a\"b", value: "x\"y")
+        XCTAssertTrue(exp.contains("\"#a\\\"b\""))
+        XCTAssertTrue(exp.contains("\"x\\\"y\""))
+        XCTAssertTrue(exp.contains("selectedIndex"))
+    }
+
     // MARK: - error mappings (honest descriptions)
+
+    /// `notASelect` names the selector and the actual role and reads as a refuse.
+    func testNotASelectDescription() {
+        let e = GhostHandsError.notASelect(selector: "#name", role: "input")
+        XCTAssertTrue(e.description.contains("#name"))
+        XCTAssertTrue(e.description.contains("input"))
+        XCTAssertTrue(e.description.contains("select"))
+    }
+
+    /// `optionNotFound` lists the real options so the caller can pick a valid one,
+    /// and reads as a refuse (never a silent no-op claimed as success).
+    func testOptionNotFoundDescription() {
+        let e = GhostHandsError.optionNotFound(
+            value: "9", selector: "#size", options: ["1 | Small", "2 | Large"])
+        XCTAssertTrue(e.description.contains("9"))
+        XCTAssertTrue(e.description.contains("Large"))
+        XCTAssertTrue(e.description.lowercased().contains("refus"))
+    }
+
+    // MARK: - error mappings (continued)
 
     /// `selectorNotFound` names the selector and app and reads as a refuse.
     func testSelectorNotFoundDescription() {

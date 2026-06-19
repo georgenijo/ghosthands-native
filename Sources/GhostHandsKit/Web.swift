@@ -385,6 +385,33 @@ public enum WebSurface {
 /// to `[]` (honest empty), never a fabricated entry. Slice 1's digest is flat
 /// (depth 0) — the richer nested ref model lands in a later slice.
 public enum CDPDigest {
+    /// JS defining `accName(el, tag)` — derives an element's ACCESSIBLE NAME from
+    /// REAL sources only, in priority order, never fabricated: `aria-label` → an
+    /// associated `<label for=id>` → a wrapping `<label>` → the element's own
+    /// innerText → `placeholder` → the form-control `name` attribute. Shared by the
+    /// page and scoped digests so a label-wrapped control (e.g. httpbin's bare
+    /// "Customer name:" input) reads WITH a name instead of blank — matching what a
+    /// screen reader and agent-browser's snapshot surface. All lookups are guarded
+    /// (try/optional) so a missing CSS.escape / detached node degrades to "" rather
+    /// than throwing the whole digest.
+    static let accNameJS = """
+    const accName = (el, tag) => {
+      let nm = (el.getAttribute('aria-label') || '').trim();
+      if (!nm && el.id) {
+        try {
+          const key = (window.CSS && CSS.escape) ? CSS.escape(el.id) : el.id;
+          const l = document.querySelector('label[for="' + key + '"]');
+          if (l) nm = (l.innerText || '').trim();
+        } catch (e) {}
+      }
+      if (!nm && el.closest) { const w = el.closest('label'); if (w) nm = (w.innerText || '').trim(); }
+      if (!nm) nm = (el.innerText || '').trim();
+      if (!nm) nm = (el.getAttribute('placeholder') || '').trim();
+      if (!nm) nm = (el.getAttribute('name') || '').trim();
+      return nm.slice(0, 200);
+    };
+    """
+
     /// The DOM-digest expression evaluated in the page. Collects interactive +
     /// text nodes with their accessible name, value, and bounding box. Kept small
     /// and `returnByValue`-friendly. (Slice 1 keeps this minimal; Slice 2+ grows
@@ -395,6 +422,7 @@ public enum CDPDigest {
       // the next read or a navigation, so a re-read SUPERSEDES — old handles must
       // not linger and collide with the new numbering.
       for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
+      \(accNameJS)
       const out = [];
       const interactive = ['a','button','input','select','textarea'];
       const text = ['h1','h2','h3','h4','h5','h6'];
@@ -412,7 +440,7 @@ public enum CDPDigest {
             ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
             : tag;
         }
-        const name = (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 200);
+        const name = accName(el, tag);
         // Stamp a shared ref on INTERACTIVE elements only (headings are read for
         // context, never clicked). The attribute IS the persistent ref store: it
         // lives in the browser's DOM across separate CLI processes, and its
@@ -456,6 +484,7 @@ public enum CDPDigest {
           try { root = document.querySelector(\(sel)); } catch (e) { root = null; }
           if (!root) return { found: false };
           for (const el of document.querySelectorAll('[data-gh-ref]')) el.removeAttribute('data-gh-ref');
+          \(accNameJS)
           const out = [];
           const interactive = ['a','button','input','select','textarea'];
           const text = ['h1','h2','h3','h4','h5','h6'];
@@ -471,7 +500,7 @@ public enum CDPDigest {
                 ? ((type === 'checkbox') ? 'checkbox' : (type === 'radio') ? 'radio' : 'input')
                 : tag;
             }
-            const name = (el.getAttribute('aria-label') || el.innerText || '').trim().slice(0, 200);
+            const name = accName(el, tag);
             let ref = '';
             if (interactive.includes(tag)) { ref = 'e' + (++n); el.setAttribute('data-gh-ref', ref); }
             let value = '', checked = null, selected = null, expanded = null;
@@ -528,16 +557,19 @@ public enum CDPDigest {
                 checked: WebActuate.optBool(row["checked"]),
                 selected: (row["selected"] as? String).flatMap { $0.isEmpty ? nil : $0 },
                 expanded: WebActuate.optBool(row["expanded"]))
-            // Drop a node with no name, no value, AND no meaningful state — a
-            // stateful-but-unlabeled control (a bare checkbox) is KEPT, not noise.
-            if name == nil && value == nil && !state.hasSignal { continue }
+            // The read stamped a bare id ("e5") on interactive elements; surface it
+            // as the `@e5` handle the digest prints and `web click/fill` accepts.
+            let ref = (row["ref"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
+            // Drop a node with no name, no value, AND no meaningful state — UNLESS it
+            // carries a ref. A ref marks an INTERACTIVE control: a bare or
+            // label-wrapped text input (empty pre-fill, label sits on a wrapper, not
+            // the element) is fully actionable, never noise — dropping it hid fillable
+            // fields from `web read`. A heading/text node has no ref and still drops.
+            if ref == nil && name == nil && value == nil && !state.hasSignal { continue }
             let frame = boundingBox(row)
             let disabled = WebActuate.boolValue(row["disabled"])
             let facts = ElementFacts(role: role, title: name, value: value,
                                      enabled: disabled ? false : nil, frame: frame)
-            // The read stamped a bare id ("e5") on interactive elements; surface it
-            // as the `@e5` handle the digest prints and `web click/fill` accepts.
-            let ref = (row["ref"] as? String).flatMap { $0.isEmpty ? nil : "@\($0)" }
             out.append(WebDigest.Entry(facts: facts, depth: 0, ref: ref,
                                        state: state.hasSignal ? state : nil))
         }
@@ -1048,6 +1080,52 @@ extension GhostHands {
         let verdict = WebActuate.fillVerdict(intended: text, readback: readback)
         return WebActuateResult(app: target.name, selector: selector,
                                 verb: "filled", verdict: verdict, port: port)
+    }
+
+    /// `web select <@eN|selector> <value>` over CDP. ONE evaluate that confirms the
+    /// element is a `<select>`, matches an option by value OR visible text, sets it,
+    /// fires input+change, and reads the now-selected option back. Verified by that
+    /// read-back (mirrors `web fill`); never asserts a selection it can't observe.
+    ///
+    ///   not found     → throw `selectorNotFound` (or `staleRef` for a ref)
+    ///   not a <select>→ throw `notASelect`
+    ///   no match      → throw `optionNotFound` (lists the real options)
+    ///   else          → selectedIndex set; read-back == request → VERIFIED, else
+    ///                   dispatched-unverified.
+    @MainActor
+    public static func webSelect(selector: String, value: String, browser: String,
+                                 lens: WebLens, debugPort: Int = 9222,
+                                 relaunch: Bool = false)
+        async throws -> WebActuateResult {
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
+
+        // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
+        let resolved = WebRef.resolve(selector)
+        let result = try await evaluateObject(
+            session, WebActuate.selectExpression(selector: resolved.selector, value: value))
+
+        guard WebActuate.boolValue(result["found"]) else {
+            // A ref that matches nothing = the stamped element moved → stale refuse.
+            if resolved.isRef { throw GhostHandsError.staleRef(ref: selector) }
+            throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
+        }
+        guard WebActuate.boolValue(result["isSelect"]) else {
+            let role = (result["role"] as? String) ?? "element"
+            throw GhostHandsError.notASelect(selector: selector, role: role)
+        }
+        guard WebActuate.boolValue(result["matched"]) else {
+            let options = (result["options"] as? [Any])?.compactMap { $0 as? String } ?? []
+            throw GhostHandsError.optionNotFound(
+                value: value, selector: selector, options: options)
+        }
+        let verdict = WebActuate.selectVerdict(
+            intended: value,
+            selectedValue: result["value"] as? String,
+            selectedText: result["text"] as? String)
+        return WebActuateResult(app: target.name, selector: selector,
+                                verb: "selected", verdict: verdict, port: port)
     }
 
     // MARK: See-the-words backup (web click/fill --text) — issue #7 secondary path

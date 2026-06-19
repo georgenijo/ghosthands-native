@@ -384,6 +384,7 @@ struct GhostHandsCLI {
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
         case "fill": await runWebFill(tail)
+        case "select": await runWebSelect(tail)
         case "html": await runWebHtml(tail)
         case "eval": await runWebEval(tail)
         case "text": await runWebText(tail)
@@ -845,6 +846,31 @@ struct GhostHandsCLI {
             failWebActuate("web fill", error)
         } catch {
             failUnexpected("web fill")
+        }
+    }
+
+    @MainActor
+    static func runWebSelect(_ rest: [String]) async {
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web select <@eN|selector> <value> [browser]
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let value = positional[1]
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
+        do {
+            let result = try await GhostHands.webSelect(
+                selector: selector, value: value, browser: browser, lens: lens,
+                debugPort: port, relaunch: relaunch)
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
+        } catch let error as GhostHandsError {
+            failWebActuate("web select", error)
+        } catch {
+            failUnexpected("web select")
         }
     }
 
@@ -2084,6 +2110,7 @@ struct GhostHandsCLI {
           ghosthands web click --text "<visible>" [browser] [--nth N]                              …or by what a human SEES (the backup: re-resolved live, ranks ties, reports what it picked)
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
           ghosthands web fill --text "<label>" "<value>" [browser] [--nth N]                       …or by the field's visible label (placeholder/aria-label/<label>)
+          ghosthands web select "<@eN|selector>" "<value>" <browser> [--cdp|--debug-port N] [--relaunch]  choose a <select> dropdown option by its value or visible text, verified by read-back
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)

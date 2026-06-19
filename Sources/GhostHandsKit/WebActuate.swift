@@ -141,6 +141,51 @@ public enum WebActuate {
         """
     }
 
+    /// The `web select` page expression: find the element, confirm it's a
+    /// `<select>`, match an option by its `value` OR its visible `text` (so the
+    /// caller can pass either), set `selectedIndex`, fire input+change, and read the
+    /// now-selected option back. Returns a self-describing object the impure caller
+    /// turns into a refuse or a verdict:
+    ///   `{ found:false }`                          → notFound / staleRef
+    ///   `{ found:true, isSelect:false, role }`     → notASelect
+    ///   `{ found:true, isSelect:true, matched:false, options:[…] }` → optionNotFound
+    ///   `{ found:true, isSelect:true, matched:true, value, text }`  → selectVerdict
+    /// The request and selector are embedded as JSON literals (never trusted as
+    /// code). Nothing is set when no option matches — we never mutate then refuse.
+    public static func selectExpression(selector: String, value: String) -> String {
+        let selJSON = jsonStringLiteral(selector)
+        let wantJSON = jsonStringLiteral(value)
+        return """
+        (() => {
+          const want = \(wantJSON);
+          let el;
+          try { el = document.querySelector(\(selJSON)); } catch (e) { el = null; }
+          if (!el) { return { found: false }; }
+          const tag = (el.tagName || '').toLowerCase();
+          if (tag !== 'select') {
+            return { found: true, isSelect: false, role: (el.getAttribute('role') || tag) };
+          }
+          const opts = Array.from(el.options || []);
+          let idx = -1;
+          for (let i = 0; i < opts.length; i++) {
+            const o = opts[i];
+            if (o.value === want || (o.text || '').trim() === want) { idx = i; break; }
+          }
+          if (idx < 0) {
+            const list = opts.map(o => (o.value || '') + ' | ' + (o.text || '').trim()).slice(0, 30);
+            return { found: true, isSelect: true, matched: false, options: list };
+          }
+          el.selectedIndex = idx;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          const sel = el.options[el.selectedIndex];
+          return { found: true, isSelect: true, matched: true,
+                   value: sel ? sel.value : null,
+                   text: sel ? (sel.text || '').trim() : null };
+        })()
+        """
+    }
+
     /// THE pure decider: classify the probe object into notFound / covered /
     /// proceed, computing the dispatch center as the box midpoint. A `found` but
     /// `covered` object is the REFUSE; a `found`, un-covered object yields the
@@ -218,6 +263,28 @@ public enum WebActuate {
         return .dispatchedUnverified(
             reason: "set dispatched; field value reads back \(readback.debugDescription) "
                 + "(≠ intended \(intended.debugDescription)) — effect unverified")
+    }
+
+    /// The SELECT verdict from the option READ BACK off the `<select>` ALONE. The
+    /// page set `selectedIndex` to the option whose `value` OR visible `text` equals
+    /// the request, then read the now-selected option back. A read-back whose value
+    /// or text equals the request VERIFIES the selection; anything else (the set
+    /// didn't stick — a controlled component reverted it, say) is honestly
+    /// DISPATCHED-UNVERIFIED. A request that matched NO option never reaches here —
+    /// it REFUSES (`optionNotFound`) upstream, so we never "select" nothing.
+    public static func selectVerdict(intended: String, selectedValue: String?,
+                                     selectedText: String?) -> Verdict {
+        let v = selectedValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let t = selectedText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if v == intended || t == intended {
+            let label = (t?.isEmpty == false) ? t!.debugDescription : "the option"
+            let val = (v?.isEmpty == false) ? " (value=\(v!))" : ""
+            return .verified(evidence: "select now shows \(label)\(val)")
+        }
+        return .dispatchedUnverified(
+            reason: "select dispatched; reads back value=\(v ?? "nil") text="
+                + "\((t?.debugDescription) ?? "nil") (≠ intended \(intended.debugDescription)) "
+                + "— effect unverified")
     }
 
     // MARK: - Small pure helpers (tolerant JSON coercion)

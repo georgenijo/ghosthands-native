@@ -139,6 +139,15 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// act on a moved element (the ref-addressing honesty boundary: a stale handle
     /// never silently retargets), telling the caller to re-read for fresh refs.
     case staleRef(ref: String)
+    /// `web select` resolved its target, but the element is NOT a `<select>` — a
+    /// dropdown selection has no meaning on a text input or a div. We REFUSE rather
+    /// than guess (e.g. silently fall back to a fill), naming the actual role.
+    case notASelect(selector: String, role: String)
+    /// `web select` found the `<select>`, but NO option's value or visible text
+    /// matched the request. We REFUSE rather than leave the prior selection and
+    /// claim a no-op succeeded — the available options are listed so the caller can
+    /// pick a real one.
+    case optionNotFound(value: String, selector: String, options: [String])
     /// `web open` was called while a LIVE managed session already exists — we
     /// REFUSE rather than spawn a second throwaway and orphan the first. The caller
     /// should `web close` it (or pass an explicit `--debug-port` to drive it).
@@ -294,6 +303,15 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "\(ref) is a stale ref — the page navigated or re-rendered since "
                 + "the last `web read` (the stamped element is gone); re-read to get "
                 + "fresh refs, then address by the new @eN"
+        case let .notASelect(selector, role):
+            return "\(selector.debugDescription) is a <\(role)>, not a <select> — "
+                + "`web select` only drives dropdowns; use `web fill`/`web click` for "
+                + "other controls"
+        case let .optionNotFound(value, selector, options):
+            let list = options.isEmpty ? "(none)" : options.map { $0.debugDescription }.joined(separator: ", ")
+            return "no option matching \(value.debugDescription) in "
+                + "\(selector.debugDescription) — refusing to leave the selection "
+                + "unchanged and claim success; available options: \(list)"
         case let .sessionAlreadyOpen(port, pid):
             return "a managed web session is already open (pid \(pid), port \(port)) "
                 + "— `web close` it first, or drive it with --debug-port \(port)"
