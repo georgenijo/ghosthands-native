@@ -246,6 +246,78 @@ public enum WebActuate {
             reason: "click dispatched; URL unchanged\(where_) — effect unverified")
     }
 
+    // MARK: - In-page (non-navigating) click verification (issue #6)
+
+    /// The in-page state probe for `web click`: capture ONLY the toggle signals the
+    /// target element actually exposes — `aria-pressed`/`-checked`/`-expanded`/
+    /// `-selected` (verbatim attribute strings), an input's `.checked`, and
+    /// `className` (a catch-all for active/selected style toggles). A missing element
+    /// returns `null` (→ no state → no proof, never a fabricated one). Read BEFORE and
+    /// AFTER a click; a flip proves an in-page effect that left the URL unchanged.
+    /// Selector embedded as a JSON literal (never trusted as code).
+    public static func clickStateExpression(selector: String) -> String {
+        let sel = jsonStringLiteral(selector)
+        return """
+        (() => {
+          let el; try { el = document.querySelector(\(sel)); } catch (e) { el = null; }
+          if (!el) return null;
+          const out = {};
+          for (const a of ['aria-pressed','aria-checked','aria-expanded','aria-selected']) {
+            const v = el.getAttribute(a);
+            if (v !== null) out[a] = v;
+          }
+          if (typeof el.checked === 'boolean') out['checked'] = el.checked;
+          out['className'] = (el.className == null) ? '' : String(el.className);
+          return out;
+        })()
+        """
+    }
+
+    /// THE pure heart: the FIRST toggle signal that flipped, in a deterministic
+    /// priority order. A signal counts ONLY when BOTH the before and after reads
+    /// reported it — a key that appeared or vanished between reads is an unstable
+    /// read, NOT a proven flip, so it is ignored (never an over-claim). A nil side
+    /// (element gone / no state) yields nil. Returns (signal, before, after) or nil.
+    public static func stateFlip(before: [String: Any]?, after: [String: Any]?)
+        -> (signal: String, before: String, after: String)? {
+        guard let before, let after else { return nil }
+        let priority = ["aria-pressed", "aria-checked", "aria-expanded",
+                        "aria-selected", "checked", "className"]
+        for key in priority {
+            guard let b = before[key], let a = after[key] else { continue }
+            let bs = stateString(b), asr = stateString(a)
+            if bs != asr { return (key, bs, asr) }
+        }
+        return nil
+    }
+
+    /// Coerce a probe value (JS string / bool decodes to NSNumber) to a stable
+    /// string for the flip comparison.
+    static func stateString(_ any: Any) -> String {
+        if let s = any as? String { return s }
+        if let b = any as? Bool { return b ? "true" : "false" }
+        if let n = any as? NSNumber { return n.boolValue ? "true" : "false" }
+        return "\(any)"
+    }
+
+    /// The CLICK verdict with an in-page fallback (issue #6). Navigation STILL WINS —
+    /// a changed href is verified with the identical evidence as the 2-arg form. When
+    /// the URL did NOT change, a proven in-page `stateFlip` promotes the click to
+    /// verified (naming the signal + before→after); otherwise it stays honestly
+    /// dispatched-unverified (the 2-arg form's reason). Never fabricates a flip.
+    public static func clickVerdict(hrefBefore: String?, hrefAfter: String?,
+                                    stateBefore: [String: Any]?,
+                                    stateAfter: [String: Any]?) -> Verdict {
+        let navVerdict = clickVerdict(hrefBefore: hrefBefore, hrefAfter: hrefAfter)
+        if case .verified = navVerdict { return navVerdict }   // navigation proved it
+        if let flip = stateFlip(before: stateBefore, after: stateAfter) {
+            return .verified(evidence: "click toggled \(flip.signal) "
+                + "\(flip.before.debugDescription) → \(flip.after.debugDescription) "
+                + "(in-page, no navigation)")
+        }
+        return navVerdict   // the honest dispatched-unverified reason
+    }
+
     /// The FILL verdict from the intended text vs the value READ BACK off the
     /// field ALONE. A read-back equal to the intended text VERIFIES the set; any
     /// other read-back (a field that rejected / transformed / capped the value, or

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.13-m4 — 2026-06-19 — `web click` earns VERIFIED on in-page toggles (issue #6)
+
+**Added — `web click` post-click DOM read-back: an in-page (non-navigating) click can now
+EARN verified.** Before, `web click` verified ONLY by navigation (a changed URL); an
+in-page toggle (a tab, an accordion, a `aria-pressed` button) was always honestly
+dispatched-unverified. Now, when the URL does NOT change, `web click` reads the target's
+toggle state back and promotes to **verified** when a signal flipped — naming the signal +
+before→after (e.g. `verified: click toggled aria-pressed "false" → "true" (in-page, no
+navigation)`). Signals, in priority order: `aria-pressed`/`-checked`/`-expanded`/`-selected`,
+an input's `.checked`, and `className` (the catch-all for active/selected style toggles).
+
+**Honesty:** navigation still WINS (a changed href verifies with identical evidence); the
+flip detector requires BOTH the before AND after read to report the SAME signal (a key that
+appeared/vanished is an unstable read, never a flip) AND the values to differ — so it can
+NEVER fabricate a verified, and a no-change/unreadable click stays honestly
+dispatched-unverified. The framing is observational ("click toggled …", auditable
+before→after), the same accepted shape as the M2 effect-witness. The pure `stateFlip` +
+4-arg `clickVerdict` + the in-page probe are hermetically tested (813 total, +11);
+adversarial honesty review **PASS**. Live-verified on an `aria-pressed` toggle button
+(verified both directions). Closes #6.
+
 ## 0.8.12-m4 — 2026-06-19 — `type`/`set-value` locators on the MCP surface (issue #5)
 
 **Fixed — `click`/`type`/`set_value` now advertise + honor the `--role`/`--text`/`--nth`

@@ -1068,8 +1068,14 @@ extension GhostHands {
             throw GhostHandsError.elementCovered(selector: selector, coveredBy: by)
         case let .proceed(center, _):
             let hrefBefore = try await readLocationHref(session)
+            // Capture the target's toggle state BEFORE the click (issue #6) so an
+            // in-page (non-navigating) flip can earn verified.
+            let stateBefore = (try? await evaluateObject(
+                session, WebActuate.clickStateExpression(selector: resolved.selector))) ?? [:]
             try await dispatchTrustedClick(session, at: center)
-            let verdict = try await postClickVerdict(session, hrefBefore: hrefBefore)
+            let verdict = try await postClickVerdict(
+                session, hrefBefore: hrefBefore, selector: resolved.selector,
+                stateBefore: stateBefore)
             return WebActuateResult(app: target.name, selector: selector,
                                     verb: "clicked", verdict: verdict, port: port)
         }
@@ -1314,8 +1320,12 @@ extension GhostHands {
             throw GhostHandsError.elementCovered(selector: label.label, coveredBy: by)
         case let .proceed(center, _):
             let hrefBefore = try await readLocationHref(session)
+            let stateBefore = (try? await evaluateObject(
+                session, WebActuate.clickStateExpression(selector: WebFind.pickSelector))) ?? [:]
             try await dispatchTrustedClick(session, at: center)
-            let verdict = try await postClickVerdict(session, hrefBefore: hrefBefore)
+            let verdict = try await postClickVerdict(
+                session, hrefBefore: hrefBefore, selector: WebFind.pickSelector,
+                stateBefore: stateBefore)
             return WebActuateResult(app: target.name, selector: label.label,
                                     verb: "clicked", verdict: verdict, port: port,
                                     note: label.note)
@@ -1481,11 +1491,21 @@ extension GhostHands {
     /// than under-claiming a real success as an error. A non-transport error (or a
     /// clean read on either attempt) flows through `clickVerdict` unchanged.
     @MainActor
-    static func postClickVerdict(_ session: CDPSession, hrefBefore: String?)
+    static func postClickVerdict(_ session: CDPSession, hrefBefore: String?,
+                                 selector: String, stateBefore: [String: Any])
         async throws -> WebActuate.Verdict {
         do {
             let after = try await readLocationHref(session)
-            return WebActuate.clickVerdict(hrefBefore: hrefBefore, hrefAfter: after)
+            // Navigation is the strongest proof; only when the URL is UNCHANGED do we
+            // read the element's toggle state back (issue #6) to catch an in-page
+            // (non-navigating) effect — a flip earns verified, else honest dispatched.
+            var stateAfter: [String: Any]?
+            if hrefBefore == after {
+                stateAfter = try? await evaluateObject(
+                    session, WebActuate.clickStateExpression(selector: selector))
+            }
+            return WebActuate.clickVerdict(hrefBefore: hrefBefore, hrefAfter: after,
+                                           stateBefore: stateBefore, stateAfter: stateAfter)
         } catch let error as GhostHandsError {
             guard case .cdpTransport = error else { throw error }
             // The execution context was likely destroyed by a navigation. Settle
