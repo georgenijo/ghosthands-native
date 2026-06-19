@@ -226,6 +226,11 @@ struct GhostHandsMCP {
                     selector: arg("selector"), value: arg("value"), browser: arg("browser"),
                     lens: lens, debugPort: port, relaunch: relaunch)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
+            case "web_type":
+                let r = try await GhostHands.webType(
+                    selector: arg("selector"), text: arg("text"), submit: flag("submit"),
+                    browser: arg("browser"), lens: lens, debugPort: port, relaunch: relaunch)
+                return MCPMapping.fromEnvelope(.fromWebActuate(r))
             case "web_html":
                 let r = try await GhostHands.webHtml(
                     selector: arg("selector"), browser: arg("browser"), lens: lens,

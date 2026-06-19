@@ -195,6 +195,32 @@ final class CDPActuateTests: XCTestCase {
         XCTAssertTrue(exp.contains("selectedIndex"))
     }
 
+    // MARK: - typeVerdict (CDP Input.insertText read-back)
+
+    /// Read-back CONTAINS the inserted text → VERIFIED (a contenteditable may add
+    /// wrapping, so containment — not equality — is the honest check).
+    func testTypeVerdictReadbackContainsVerified() {
+        let v = WebActuate.typeVerdict(intended: "pong", readback: "pong", submitted: false)
+        guard case let .verified(evidence) = v else { return XCTFail("expected verified") }
+        XCTAssertTrue(evidence.contains("pong"))
+    }
+
+    /// With submit, the typed half can still VERIFY (read-back before Enter), and the
+    /// evidence states the send is unverified — never claimed.
+    func testTypeVerdictSubmitNotesSendUnverified() {
+        let v = WebActuate.typeVerdict(intended: "hi", readback: "hi", submitted: true)
+        guard case let .verified(evidence) = v else { return XCTFail("expected verified") }
+        XCTAssertTrue(evidence.lowercased().contains("send unverified"))
+    }
+
+    /// Text that did not land (empty / mismatched read-back) → dispatched-unverified.
+    func testTypeVerdictNoReadbackDispatched() {
+        let v = WebActuate.typeVerdict(intended: "x", readback: "", submitted: false)
+        guard case .dispatchedUnverified = v else {
+            return XCTFail("expected dispatchedUnverified")
+        }
+    }
+
     // MARK: - error mappings (honest descriptions)
 
     /// `notASelect` names the selector and the actual role and reads as a refuse.

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.7-m4 — 2026-06-19 — Electron-CDP: `web type` for custom editors
+
+**Added — `web type "<@eN|selector>" "<text>" [--submit]`: type via CDP
+`Input.insertText`.** The fix for the boundary the Cursor walkthrough exposed —
+`web fill` sets `.value`, a no-op on a **contenteditable / custom editor** (Cursor's
+agent box, Lexical/ProseMirror, Monaco). `web type` focuses the element and injects
+text the way a real keypress would (the primitive Playwright/Puppeteer use), so those
+editors accept it; `--submit` then dispatches a real Enter via
+`Input.dispatchKeyEvent`. Verified by reading the element's text back (`.value` or
+innerText); the send half is honestly reported "Enter dispatched (send unverified)".
+CLI + 35th MCP tool (`web_type`). Pure verdict + focus/read-back expressions
+hermetically tested (738 total, +3).
+
+**This makes Electron apps drivable.** An Electron app (Cursor, VS Code, Slack,
+Discord) launched with `--remote-debugging-port=N` is just Chromium — the existing
+web tier attaches and drives its DOM. **Live-verified:** `web read Cursor
+--debug-port 9333` read Cursor's real renderer DOM (27 refs + frames) where AX saw
+nothing, and `web type` earned a VERIFIED read-back on a live page. (The full
+"send a prompt to Cursor's agent" needs one more orchestration step — reliably
+*opening* the agent panel — which is UI-specific, not a `web type` limitation.)
+
+Step 2 of 3 toward "drive any app" (glide → **Electron-CDP** → Vision/OCR). Version
+0.8.6-m4 → 0.8.7-m4.
+
 ## 0.8.6-m4 — 2026-06-19 — "fake mouse" glide (visible cursor travel)
 
 **Added — `GHOSTHANDS_GLIDE=1`: ease the real cursor to the target before a visible

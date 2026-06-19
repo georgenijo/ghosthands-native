@@ -448,6 +448,22 @@ public enum MCPTools {
              ],
              required: ["selector", "text", "browser"]),
 
+        Tool(name: "web_type",
+             description: "Type into a web/Electron element via CDP Input.insertText (CDP "
+                 + "only) — drives plain inputs AND contenteditable/custom editors (Cursor's "
+                 + "agent box, Lexical/ProseMirror, Monaco) where a value-set is a no-op. "
+                 + "Verified by text read-back; submit=true then presses Enter (send reported "
+                 + "dispatched). Accepts an @eN ref or CSS selector.",
+             properties: [
+                 Property(name: "selector", type: "string",
+                          description: "an @eN ref or CSS selector for the input/editor"),
+                 Property(name: "text", type: "string", description: "the text to type"),
+                 Property(name: "submit", type: "boolean",
+                          description: "press Enter after typing (default false)"),
+                 browserProp, debugPortProp, relaunchProp,
+             ],
+             required: ["selector", "text", "browser"]),
+
         Tool(name: "web_select",
              description: "Choose a <select> dropdown option by its value OR visible text "
                  + "(CDP only), then read the selected option back. Verified only when the "

@@ -287,6 +287,54 @@ public enum WebActuate {
                 + "— effect unverified")
     }
 
+    /// The TYPE verdict (CDP `Input.insertText` into a focused element — works on
+    /// plain inputs AND contenteditable/custom editors like Cursor's agent box,
+    /// where a `.value` set is a no-op). Verified when the element's text READS BACK
+    /// as containing the inserted text; otherwise dispatched-unverified. When
+    /// `submitted`, an Enter was dispatched after — but a send has no cheap in-page
+    /// observable, so that half is always reported as dispatched (never faked).
+    public static func typeVerdict(intended: String, readback: String?,
+                                   submitted: Bool) -> Verdict {
+        let got = readback ?? ""
+        let sub = submitted ? "; Enter dispatched (send unverified)" : ""
+        if !intended.isEmpty && got.contains(intended) {
+            return .verified(evidence: "input reads back containing \(intended.debugDescription)\(sub)")
+        }
+        return .dispatchedUnverified(
+            reason: "text inserted; read-back \(got.debugDescription) did not confirm "
+                + "\(intended.debugDescription)\(sub) — effect unverified")
+    }
+
+    /// Focus the target (so `Input.insertText` lands in it) and report existence.
+    /// `{found:false}` → notFound/staleRef upstream. Selector embedded as JSON.
+    public static func focusExpression(selector: String) -> String {
+        let sel = jsonStringLiteral(selector)
+        return """
+        (() => {
+          let el; try { el = document.querySelector(\(sel)); } catch (e) { el = null; }
+          if (!el) { return { found: false }; }
+          if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
+          el.focus();
+          return { found: true };
+        })()
+        """
+    }
+
+    /// Read an element's text for the type read-back: `.value` for inputs, else
+    /// innerText/textContent (contenteditable / custom editors). Returns a string or
+    /// null (element gone) — never fabricated. Selector embedded as JSON.
+    public static func readTextExpression(selector: String) -> String {
+        let sel = jsonStringLiteral(selector)
+        return """
+        (() => {
+          const el = document.querySelector(\(sel));
+          if (!el) return null;
+          return (typeof el.value === 'string') ? el.value
+               : (el.innerText || el.textContent || '');
+        })()
+        """
+    }
+
     // MARK: - Small pure helpers (tolerant JSON coercion)
 
     /// Coerce a CDP `returnByValue` boolean (JS `true`/`false` decodes to an

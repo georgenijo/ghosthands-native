@@ -1128,6 +1128,70 @@ extension GhostHands {
                                 verb: "selected", verdict: verdict, port: port)
     }
 
+    /// `web type "<@eN|selector>" "<text>" [--submit]` over CDP — focus the element
+    /// and inject text via `Input.insertText`, the CDP primitive that drives plain
+    /// inputs AND contenteditable/custom editors (Cursor's agent box, Lexical/
+    /// ProseMirror, Monaco) where a `.value` set (web fill) is a no-op. This is the
+    /// Electron-app fix: an Electron app launched with `--remote-debugging-port` is
+    /// just Chromium, so the web tier drives its DOM. Verified by reading the
+    /// element's text back; `--submit` then dispatches Enter (send is reported
+    /// dispatched, never faked).
+    @MainActor
+    public static func webType(selector: String, text: String, submit: Bool,
+                               browser: String, lens: WebLens, debugPort: Int = 9222,
+                               relaunch: Bool = false)
+        async throws -> WebActuateResult {
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port)
+
+        let resolved = WebRef.resolve(selector)
+        // Focus the target so the inserted text lands in it; confirm it exists.
+        let pre = try await evaluateObject(
+            session, WebActuate.focusExpression(selector: resolved.selector))
+        guard WebActuate.boolValue(pre["found"]) else {
+            if resolved.isRef { throw GhostHandsError.staleRef(ref: selector) }
+            throw GhostHandsError.selectorNotFound(selector: selector, app: target.name)
+        }
+        // Inject as if typed — editors accept this where `.value=` is ignored.
+        _ = try await session.call("Input.insertText", params: ["text": text])
+        // Read back BEFORE any submit (a send usually clears the field).
+        let readback = try await evaluateString(
+            session, WebActuate.readTextExpression(selector: resolved.selector))
+        if submit { try await dispatchEnter(session) }
+        let verdict = WebActuate.typeVerdict(intended: text, readback: readback, submitted: submit)
+        return WebActuateResult(app: target.name, selector: selector,
+                                verb: submit ? "typed+submit" : "typed",
+                                verdict: verdict, port: port)
+    }
+
+    /// Read a string off the page (the `.value`/innerText read-back for `web type`),
+    /// or nil when the result isn't a string. A page-side throw surfaces as
+    /// `cdpTransport` (never masquerades as an unreadable value).
+    @MainActor
+    static func evaluateString(_ session: CDPSession, _ expression: String)
+        async throws -> String? {
+        let reply = try await session.call("Runtime.evaluate", params: [
+            "expression": expression, "returnByValue": true, "awaitPromise": true,
+        ])
+        try throwIfEvaluateException(reply)
+        guard let resultObj = reply["result"] as? [String: Any] else { return nil }
+        return resultObj["value"] as? String
+    }
+
+    /// Dispatch a real Enter key press/release via CDP `Input.dispatchKeyEvent` (the
+    /// way a custom editor's submit handler expects), used by `web type --submit`.
+    @MainActor
+    static func dispatchEnter(_ session: CDPSession) async throws {
+        let down: [String: Any] = [
+            "type": "keyDown", "key": "Enter", "code": "Enter",
+            "windowsVirtualKeyCode": 13, "nativeVirtualKeyCode": 13,
+        ]
+        var up = down; up["type"] = "keyUp"
+        _ = try await session.call("Input.dispatchKeyEvent", params: down)
+        _ = try await session.call("Input.dispatchKeyEvent", params: up)
+    }
+
     // MARK: See-the-words backup (web click/fill --text) — issue #7 secondary path
 
     /// `web click --text "<visible>" [--nth N]` — click the control a HUMAN would

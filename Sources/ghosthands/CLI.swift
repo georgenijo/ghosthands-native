@@ -429,6 +429,7 @@ struct GhostHandsCLI {
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
         case "fill": await runWebFill(tail)
+        case "type": await runWebType(tail)
         case "select": await runWebSelect(tail)
         case "html": await runWebHtml(tail)
         case "eval": await runWebEval(tail)
@@ -916,6 +917,34 @@ struct GhostHandsCLI {
             failWebActuate("web select", error)
         } catch {
             failUnexpected("web select")
+        }
+    }
+
+    @MainActor
+    static func runWebType(_ rest: [String]) async {
+        var args = scanJSON(rest)
+        let submit = args.contains("--submit")
+        args.removeAll { $0 == "--submit" }
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(args)
+        // web type <@eN|selector> <text> [browser] [--submit]
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let text = positional[1]
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
+        do {
+            let result = try await GhostHands.webType(
+                selector: selector, text: text, submit: submit, browser: browser,
+                lens: lens, debugPort: port, relaunch: relaunch)
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
+        } catch let error as GhostHandsError {
+            failWebActuate("web type", error)
+        } catch {
+            failUnexpected("web type")
         }
     }
 
@@ -2159,6 +2188,7 @@ struct GhostHandsCLI {
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
           ghosthands web fill --text "<label>" "<value>" [browser] [--nth N]                       …or by the field's visible label (placeholder/aria-label/<label>)
           ghosthands web select "<@eN|selector>" "<value>" <browser> [--cdp|--debug-port N] [--relaunch]  choose a <select> dropdown option by its value or visible text, verified by read-back
+          ghosthands web type "<@eN|selector>" "<text>" <browser> [--submit] [--debug-port N]  type via CDP Input.insertText — drives contenteditable/custom editors (Electron apps too); --submit presses Enter
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)
