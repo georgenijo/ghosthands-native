@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.4-m4 — 2026-06-19 — see-where-it-acts (opt-in visual overlay)
+
+**Added — `GHOSTHANDS_HIGHLIGHT=1`: a visual overlay so a human can SEE where
+ghosthands acts.** When set, `click` flashes a red highlight box at the target
+control's on-screen frame (read from AX) just before pressing it. The paradox it
+resolves: ghosthands never moves the mouse (it acts through the AX tree), so there's
+no pointer to film — instead we draw a transparent, **click-through, non-activating**
+overlay panel (`.screenSaver` level, `ignoresMouseEvents`, `orderFrontRegardless`)
+at the element's frame, pulse it, and fade. **No cursor move, no focus steal** — the
+invisibility contract is fully intact (verified live: the frontmost app was unchanged
+across a flash). Observability only: it shows where the AX target *is*, never a fake
+pointer, and a refuse flashes nothing (the box fires only right before a real press).
+Off by default → no AppKit window is ever created, zero cost.
+
+Pure pieces (the AX→Cocoa coordinate flip + the env gate) are hermetically tested
+(731 total, +3); the panel draw is live-only. Live-verified flashing on the Cursor
+Dock tile and on a toolbar button. Version 0.8.3-m4 → 0.8.4-m4.
+
 ## 0.8.3-m4 — 2026-06-19 — the app-level eye + open-an-app-by-its-Dock-icon
 
 Two additions that let a brain do the most natural thing — *"open Cursor"* → see
