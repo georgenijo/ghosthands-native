@@ -204,6 +204,23 @@ calls — `see <app>` (one fused eye: AX + CDP + OCR, ranked + `@ref`-stamped) t
 no other eye/hand can reach. The honesty contract held throughout (navigation-verified,
 occlusion-refused, stale-refused, dispatched-unverified — never a fake success).
 
+**Post-A follow-ups shipped (all on `feat/drive-any-app`, PR #13):**
+- **#5 ✅ (0.8.12)** — `type`/`set-value` honor `--role`/`--text`/`--nth` on the MCP surface.
+- **#6 ✅ (0.8.13)** — `web click` earns VERIFIED on in-page (non-navigating) toggles via a
+  post-click DOM state read-back (nav still wins; an unstable read never fabricates).
+- **A3-gap ✅ (0.8.14)** — `act "@ref"` pins CDP reattach to the exact renderer `see` read
+  (`SeeSnapshot.cdpTargetId` + `CDPTargetPick.id`), so non-default-page refs are actionable.
+- **PR review (0.8.15-pending)** — CodeRabbit honesty/correctness fixes: bare `--type`
+  refuses, cdp-ref-without-port refuses, ambiguous `--target` substring refuses, `see`
+  settle no longer blocks the MainActor.
+- **#1 closed** (Vision/OCR shipped + folded into `see`). 816 hermetic tests.
+
+**Open backlog:** #3 (UI-test flow-runner + JSON/JUnit report — next pickup), #4
+(packaging/notarization — blocked on an Apple Developer signing identity), #2 (always-on
+daemon + AXObserver — deferred, needs a design pass). Useful new ideas surfaced by the
+Cursor capstone: shadow-DOM / iframe piercing for `see`'s CDP eye (Cursor's composer lives
+in a shadow root); a launch-witnessed VERIFIED for Dock/app-open; OCR window-id robustness.
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.
