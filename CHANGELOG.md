@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.8.3-m4 — 2026-06-19 — the app-level eye + open-an-app-by-its-Dock-icon
+
+Two additions that let a brain do the most natural thing — *"open Cursor"* → see
+what's running, then click the Dock icon — entirely through ghosthands.
+
+**Added — `apps`: list running GUI apps.** Name, bundle id, pid, and a `[frontmost]`
+marker, sorted by name; faceless daemons / XPC services excluded
+(`activationPolicy == .regular`) so the list matches the Dock + Cmd-Tab, not the
+process table. Pure read (no AX walk, no focus steal). CLI + 34th MCP tool + `--json`
+(a `{count, apps:[…]}` envelope). The app-level **eye**: answer "what's open?" before
+deciding to open or drive something.
+
+**Fixed — `click "<App>" Dock` now opens/activates an app by its Dock icon.** A Dock
+tile is an `AXDockItem`, which advertises AXPress (pressing it launches/activates the
+app — the same thing a human does clicking the Dock) but was missing from the
+control-role allowlist, so `find` saw it while `click` refused it. Added `AXDockItem`
+to `Finder.controlRoles`. Now `click "Cursor" Dock` launches Cursor. Honest verdict:
+**dispatched-unverified** (a Dock press has no in-element observable) — the launch is
+confirmed by a follow-up `apps` read, the brain verifying through the eye rather than
+the tool asserting. (A launch-witnessed VERIFIED is possible future polish.)
+
+**Architecture note (why this matters):** ghosthands is **hands + eyes, no model**.
+The "instinct" to *check the Dock → find the icon → click it* is the **brain's** job
+(the agent/LLM driving the verbs), never the tool's. These two additions give that
+brain the eye (`apps`) and the hand (`click … Dock`) for app-level control; the
+planning stays where it belongs — outside the tool. Live-verified: `apps` showed
+Cursor absent, `click "Cursor" Dock` launched it, `apps` then showed it running.
+728 hermetic tests (+4). Version 0.8.2-m4 → 0.8.3-m4.
+
 ## 0.8.2-m4 — 2026-06-19 — menu bar (a DEFERRED row goes green)
 
 **Added — `menu "<A > B > C>" <app>`: drive an app's regular menu bar.** Resolves a

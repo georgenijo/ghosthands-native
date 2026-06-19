@@ -178,6 +178,13 @@ public enum MCPTools {
              ],
              required: ["path", "app"]),
 
+        Tool(name: "apps",
+             description: "List running GUI apps (name, bundle id, pid, frontmost) — "
+                 + "the app-level eye for 'what's open?'. Pure read; faceless daemons "
+                 + "excluded. Pair with click \"<App>\" Dock to open one.",
+             properties: [],
+             required: []),
+
         Tool(name: "snapshot",
              description: "Dump the app's AX tree (pure read). `format` selects the "
                  + "indented text tree (ax) or a JSON array (json).",

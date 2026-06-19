@@ -42,6 +42,8 @@ struct GhostHandsCLI {
             runNavigate(Array(args.dropFirst()))
         case "web":
             await runWeb(Array(args.dropFirst()))
+        case "apps":
+            runApps(Array(args.dropFirst()))
         case "windows":
             runWindows(Array(args.dropFirst()))
         case "window":
@@ -331,6 +333,19 @@ struct GhostHandsCLI {
         }
         return "\(o.verbLabel) \(o.name.debugDescription) \(where_) — "
             + "\(o.action) accepted; no observable change (effect unverified)"
+    }
+
+    // MARK: - apps (list running GUI apps — the app-level eye)
+
+    @MainActor
+    static func runApps(_ rest: [String]) {
+        _ = scanJSON(rest)
+        let list = GhostHands.apps()
+        if jsonMode { JSONResult.fromApps(list).emit() }
+        else {
+            print("— \(list.count) running app(s)")
+            for a in list { print(a.line) }
+        }
     }
 
     // MARK: - menu (drive the app menu bar: File > Open Recent > …)
@@ -2129,6 +2144,8 @@ struct GhostHandsCLI {
           ghosthands right-click "<name>" <app> [--visible]   open an element's context menu (AXShowMenu, else pixel right-click), verified by menu-appeared
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
           ghosthands menu "<A > B > C>" <app>          drive the app menu bar (e.g. "File > Open Recent > ~/proj"); AXPress per level, dispatched-unverified
+          ghosthands apps                             list running GUI apps (name, bundle, pid, frontmost) — the "what's open?" eye
+          ghosthands click "<App>" Dock               open/activate an app by clicking its Dock icon (AXDockItem)
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)

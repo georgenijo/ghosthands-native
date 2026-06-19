@@ -61,6 +61,19 @@ extension JSONResult {
             fields: fields)
     }
 
+    public static func fromApps(_ apps: [AppInfo]) -> JSONResult {
+        let rows: [GHJSONValue] = apps.map { a in
+            var obj: [(String, GHJSONValue)] = [("name", .string(a.name))]
+            if let b = a.bundleID { obj.append(("bundle", .string(b))) }
+            obj.append(("pid", .int(Int(a.pid))))
+            obj.append(("active", .bool(a.active)))
+            return .object(obj)
+        }
+        return JSONResult(
+            verb: "apps", status: .ok,
+            fields: [("count", .int(apps.count)), ("apps", .array(rows))])
+    }
+
     public static func fromMenu(_ o: MenuOutcome) -> JSONResult {
         let fields: [(String, GHJSONValue)] = [
             ("path", .array(o.path.map { .string($0) })),

@@ -211,6 +211,11 @@ enum Finder {
         "AXPopUpButton", "AXLink", "AXDisclosureTriangle", "AXIncrementor",
         "AXSegmentedControl", "AXTab", "AXTabButton", "AXSlider", "AXStepper",
         "AXSwitch", "AXToggle", "AXColorWell",
+        // Dock tiles: pressing one launches/activates an app (or opens a folder /
+        // minimized window). They advertise AXPress, but supportedActions() can read
+        // nil for them too — so allowlist the role. This is what makes
+        // `click "<App>" Dock` open an app the way a human clicks its dock icon.
+        "AXDockItem",
     ]
 
     /// A candidate we may press: advertises AXPress, OR is a known control role.
