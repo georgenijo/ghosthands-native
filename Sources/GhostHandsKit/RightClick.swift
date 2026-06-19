@@ -176,6 +176,7 @@ extension GhostHands {
         let probe = MenuProbe(pid: target.pid)
         let menusBefore = probe.menuCount()
 
+        Highlight.flashIfEnabled(element)
         let route: RightClickRoute
         if facts.supports("AXShowMenu") {
             // PREFERRED AX ROUTE — invisible, cursor-less. A throw here is a REFUSE

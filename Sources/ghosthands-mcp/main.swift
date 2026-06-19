@@ -110,6 +110,14 @@ struct GhostHandsMCP {
                 let o = try GhostHands.act(action: arg("action"), name: arg("name"),
                                            appSpec: arg("app"))
                 return MCPMapping.map(o)
+            case "menu":
+                let o = try GhostHands.menu(path: arg("path"), appSpec: arg("app"))
+                return MCPMapping.fromEnvelope(.fromMenu(o))
+            case "apps":
+                return MCPMapping.fromEnvelope(.fromApps(GhostHands.apps()))
+            case "ocr":
+                let items = try await GhostHands.ocr(appSpec: arg("app"))
+                return MCPMapping.fromEnvelope(.fromOCR(items, app: arg("app")))
             case "snapshot":
                 let o = try GhostHands.snapshot(appSpec: arg("app"))
                 let asJSON = (MCPProtocol.string("format", from: arguments) ?? "ax") == "json"
@@ -215,6 +223,16 @@ struct GhostHandsMCP {
                 let r = try await GhostHands.webFill(
                     selector: arg("selector"), text: arg("text"), browser: arg("browser"),
                     lens: lens, debugPort: port, relaunch: relaunch)
+                return MCPMapping.fromEnvelope(.fromWebActuate(r))
+            case "web_select":
+                let r = try await GhostHands.webSelect(
+                    selector: arg("selector"), value: arg("value"), browser: arg("browser"),
+                    lens: lens, debugPort: port, relaunch: relaunch)
+                return MCPMapping.fromEnvelope(.fromWebActuate(r))
+            case "web_type":
+                let r = try await GhostHands.webType(
+                    selector: arg("selector"), text: arg("text"), submit: flag("submit"),
+                    browser: arg("browser"), lens: lens, debugPort: port, relaunch: relaunch)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
             case "web_html":
                 let r = try await GhostHands.webHtml(

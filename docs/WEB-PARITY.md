@@ -17,11 +17,17 @@ Google Maps) was driven twice:
 2. **agent-browser 0.27.0** using only its native verbs (`snapshot`/`get`/`find`/
    `click`/`fill`/`check`/`select`) — no JS.
 
-Both cleared every **browser** task. The two agent-browser misses were
-**structural, not skill**: it cannot drive a native macOS app (TextEdit), and its
-bundled Chromium cannot play DRM/H.264 video (YouTube showed "Something went
-wrong"). ghosthands did both — and every ghosthands verb stayed verify-or-refuse,
-while agent-browser printed `✓ Done` even on a fill that silently did nothing.
+Both cleared every **browser** task. The one durable agent-browser miss was
+**structural, not skill**: it cannot drive a native macOS app (TextEdit).
+ghosthands did that — and every ghosthands verb stayed verify-or-refuse, while
+agent-browser printed `✓ Done` even on a fill that silently did nothing.
+
+> **Correction (re-test 2026-06-19, agent-browser 0.27.0):** the original run
+> recorded a *second* structural miss — "bundled Chromium can't play DRM/H.264
+> (YouTube)". That **no longer reproduces**: in the re-test agent-browser played
+> YouTube fine (`currentTime` advanced 0.83→4.86 after a user-gesture click; bare
+> `.play()` is just blocked by autoplay policy). Treat the YouTube/DRM line as
+> **stale** — it is NOT a current ghosthands advantage. The native-app gap stands.
 
 So ghosthands **wins on capability + honesty**. It **loses on driving ergonomics**.
 This doc is about closing that one gap without giving up the wins.

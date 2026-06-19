@@ -165,6 +165,34 @@ public enum MCPTools {
              ],
              required: ["action", "name", "app"]),
 
+        Tool(name: "menu",
+             description: "Drive an app's menu bar by a ' > '-separated path "
+                 + "(e.g. \"File > Open Recent > ~/proj\"). AXPress through each "
+                 + "level, no cursor/focus steal. Always dispatched-unverified (a menu "
+                 + "action has no in-AX observable); refuses on an unmatched/ambiguous "
+                 + "segment or a path past a leaf.",
+             properties: [
+                 Property(name: "path", type: "string",
+                          description: "menu path, ' > '-separated (File > New File)"),
+                 appProp,
+             ],
+             required: ["path", "app"]),
+
+        Tool(name: "ocr",
+             description: "Vision OCR a window: recognize on-screen text + where each line "
+                 + "sits (screen rect), for surfaces with no AX and no DOM (canvas, games, "
+                 + "remote screens). Pure read; needs Screen Recording. The universal "
+                 + "fallback eye.",
+             properties: [appProp],
+             required: ["app"]),
+
+        Tool(name: "apps",
+             description: "List running GUI apps (name, bundle id, pid, frontmost) — "
+                 + "the app-level eye for 'what's open?'. Pure read; faceless daemons "
+                 + "excluded. Pair with click \"<App>\" Dock to open one.",
+             properties: [],
+             required: []),
+
         Tool(name: "snapshot",
              description: "Dump the app's AX tree (pure read). `format` selects the "
                  + "indented text tree (ax) or a JSON array (json).",
@@ -427,6 +455,36 @@ public enum MCPTools {
                  browserProp, debugPortProp, relaunchProp,
              ],
              required: ["selector", "text", "browser"]),
+
+        Tool(name: "web_type",
+             description: "Type into a web/Electron element via CDP Input.insertText (CDP "
+                 + "only) — drives plain inputs AND contenteditable/custom editors (Cursor's "
+                 + "agent box, Lexical/ProseMirror, Monaco) where a value-set is a no-op. "
+                 + "Verified by text read-back; submit=true then presses Enter (send reported "
+                 + "dispatched). Accepts an @eN ref or CSS selector.",
+             properties: [
+                 Property(name: "selector", type: "string",
+                          description: "an @eN ref or CSS selector for the input/editor"),
+                 Property(name: "text", type: "string", description: "the text to type"),
+                 Property(name: "submit", type: "boolean",
+                          description: "press Enter after typing (default false)"),
+                 browserProp, debugPortProp, relaunchProp,
+             ],
+             required: ["selector", "text", "browser"]),
+
+        Tool(name: "web_select",
+             description: "Choose a <select> dropdown option by its value OR visible text "
+                 + "(CDP only), then read the selected option back. Verified only when the "
+                 + "read-back matches; refuses if the target isn't a <select> or no option "
+                 + "matches (lists the real options). Accepts an @eN ref or a CSS selector.",
+             properties: [
+                 Property(name: "selector", type: "string",
+                          description: "an @eN ref or CSS selector for the <select>"),
+                 Property(name: "value", type: "string",
+                          description: "the option's value or visible text to choose"),
+                 browserProp, debugPortProp, relaunchProp,
+             ],
+             required: ["selector", "value", "browser"]),
 
         Tool(name: "web_html",
              description: "Read a CSS-selected element's outerHTML + attributes + key computed "

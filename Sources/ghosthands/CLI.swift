@@ -34,12 +34,16 @@ struct GhostHandsCLI {
             runRightClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
+        case "menu":
+            runMenu(Array(args.dropFirst()))
         case "focus":
             runFocus(Array(args.dropFirst()))
         case "navigate":
             runNavigate(Array(args.dropFirst()))
         case "web":
             await runWeb(Array(args.dropFirst()))
+        case "apps":
+            runApps(Array(args.dropFirst()))
         case "windows":
             runWindows(Array(args.dropFirst()))
         case "window":
@@ -56,6 +60,10 @@ struct GhostHandsCLI {
             runAssert(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
+        case "ocr":
+            await runOCR(Array(args.dropFirst()))
+        case "ocr-click", "ocrclick":
+            await runOCRClick(Array(args.dropFirst()))
         case "click-at":
             await runClickAt(Array(args.dropFirst()))
         case "drag":
@@ -331,6 +339,47 @@ struct GhostHandsCLI {
             + "\(o.action) accepted; no observable change (effect unverified)"
     }
 
+    // MARK: - apps (list running GUI apps — the app-level eye)
+
+    @MainActor
+    static func runApps(_ rest: [String]) {
+        _ = scanJSON(rest)
+        let list = GhostHands.apps()
+        if jsonMode { JSONResult.fromApps(list).emit() }
+        else {
+            print("— \(list.count) running app(s)")
+            for a in list { print(a.line) }
+        }
+    }
+
+    // MARK: - menu (drive the app menu bar: File > Open Recent > …)
+
+    @MainActor
+    static func runMenu(_ rest: [String]) {
+        let pos = scanJSON(rest)
+        // menu "<A > B > C>" <app>
+        guard pos.count >= 2 else { usage() }
+        let path = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try GhostHands.menu(path: path, appSpec: appSpec)
+            if jsonMode { JSONResult.fromMenu(outcome).emit() }
+            else { print(reportMenu(outcome)) }
+        } catch let error as GhostHandsError {
+            fail("menu", error)
+        } catch {
+            failUnexpected("menu")
+        }
+    }
+
+    /// Honest one-liner for the menu verb. A menu action has no in-AX observable, so
+    /// the result is always DISPATCHED-UNVERIFIED (AXPress accepted at each step;
+    /// exit 0) — never a fabricated success; a refuse exits non-zero upstream.
+    static func reportMenu(_ o: MenuOutcome) -> String {
+        let trail = o.path.joined(separator: " > ")
+        return "menu \(trail.debugDescription) in \(o.app) — \(o.evidence)"
+    }
+
     // MARK: - focus
 
     @MainActor
@@ -384,6 +433,8 @@ struct GhostHandsCLI {
         case "tabs": await runWebTabs(tail)
         case "click": await runWebClick(tail)
         case "fill": await runWebFill(tail)
+        case "type": await runWebType(tail)
+        case "select": await runWebSelect(tail)
         case "html": await runWebHtml(tail)
         case "eval": await runWebEval(tail)
         case "text": await runWebText(tail)
@@ -845,6 +896,59 @@ struct GhostHandsCLI {
             failWebActuate("web fill", error)
         } catch {
             failUnexpected("web fill")
+        }
+    }
+
+    @MainActor
+    static func runWebSelect(_ rest: [String]) async {
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // web select <@eN|selector> <value> [browser]
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let value = positional[1]
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
+        do {
+            let result = try await GhostHands.webSelect(
+                selector: selector, value: value, browser: browser, lens: lens,
+                debugPort: port, relaunch: relaunch)
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
+        } catch let error as GhostHandsError {
+            failWebActuate("web select", error)
+        } catch {
+            failUnexpected("web select")
+        }
+    }
+
+    @MainActor
+    static func runWebType(_ rest: [String]) async {
+        var args = scanJSON(rest)
+        let submit = args.contains("--submit")
+        args.removeAll { $0 == "--submit" }
+        let (lens, parsedPort, relaunch, positional) = parseWebLens(args)
+        // web type <@eN|selector> <text> [browser] [--submit]
+        guard positional.count >= 2 else { usage() }
+        let selector = positional[0]
+        let text = positional[1]
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 3 ? positional[2] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
+        do {
+            let result = try await GhostHands.webType(
+                selector: selector, text: text, submit: submit, browser: browser,
+                lens: lens, debugPort: port, relaunch: relaunch)
+            if jsonMode { JSONResult.fromWebActuate(result).emit() }
+            else { print(reportWebActuate(result)) }
+        } catch let error as GhostHandsError {
+            failWebActuate("web type", error)
+        } catch {
+            failUnexpected("web type")
         }
     }
 
@@ -1442,6 +1546,48 @@ struct GhostHandsCLI {
             fail("click-at", error)
         } catch {
             failUnexpected("click-at")
+        }
+    }
+
+    // MARK: - ocr / ocr-click (Vision OCR — the universal fallback eye)
+
+    @MainActor
+    static func runOCR(_ rest: [String]) async {
+        let pos = scanJSON(rest)
+        guard let appSpec = pos.first else { usage() }
+        do {
+            let items = try await GhostHands.ocr(appSpec: appSpec)
+            if jsonMode { JSONResult.fromOCR(items, app: appSpec).emit() }
+            else {
+                print("— \(items.count) text region(s) via Vision OCR in \(appSpec)")
+                for it in items {
+                    let r = it.screenRect
+                    print("\(it.text.debugDescription)  @(\(Int(r.minX)),\(Int(r.minY)) "
+                        + "\(Int(r.width))×\(Int(r.height)))  conf=\(Int(it.confidence * 100))%")
+                }
+            }
+        } catch let error as GhostHandsError {
+            fail("ocr", error)
+        } catch {
+            failUnexpected("ocr")
+        }
+    }
+
+    @MainActor
+    static func runOCRClick(_ rest: [String]) async {
+        let pos = scanJSON(rest)
+        // ocr-click "<text>" <app>
+        guard pos.count >= 2 else { usage() }
+        let query = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try await GhostHands.ocrClick(text: query, appSpec: appSpec)
+            if jsonMode { JSONResult.fromPixel(outcome).emit() }
+            else { print(reportPixel(outcome)) }
+        } catch let error as GhostHandsError {
+            fail("ocr-click", error)
+        } catch {
+            failUnexpected("ocr-click")
         }
     }
 
@@ -2072,9 +2218,14 @@ struct GhostHandsCLI {
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands right-click "<name>" <app> [--visible]   open an element's context menu (AXShowMenu, else pixel right-click), verified by menu-appeared
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
+          ghosthands menu "<A > B > C>" <app>          drive the app menu bar (e.g. "File > Open Recent > ~/proj"); AXPress per level, dispatched-unverified
+          ghosthands apps                             list running GUI apps (name, bundle, pid, frontmost) — the "what's open?" eye
+          ghosthands click "<App>" Dock               open/activate an app by clicking its Dock icon (AXDockItem)
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
+          ghosthands ocr <app>                        Vision OCR the window: recognized text + screen rects (no AX/DOM needed; needs Screen Recording)
+          ghosthands ocr-click "<text>" <app>         find a phrase via OCR + click it (visible HID, verified by pixel-diff; refuses on no/ambiguous match)
           ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)
           ghosthands web close                                                       terminate the managed session + remove its throwaway profile
           ghosthands web wait (--text <s> | --url <glob> | --selector <css> [--gone] | --load domcontentloaded|networkidle) [browser] [--timeout s] [--interval ms]   page-side wait; timeout REFUSES (like AX wait)
@@ -2084,6 +2235,8 @@ struct GhostHandsCLI {
           ghosthands web click --text "<visible>" [browser] [--nth N]                              …or by what a human SEES (the backup: re-resolved live, ranks ties, reports what it picked)
           ghosthands web fill "<@eN|selector>" "<text>" <browser> [--cdp|--debug-port N] [--relaunch] set an input's value by @eN ref or CSS selector (CDP-only), verified by read-back
           ghosthands web fill --text "<label>" "<value>" [browser] [--nth N]                       …or by the field's visible label (placeholder/aria-label/<label>)
+          ghosthands web select "<@eN|selector>" "<value>" <browser> [--cdp|--debug-port N] [--relaunch]  choose a <select> dropdown option by its value or visible text, verified by read-back
+          ghosthands web type "<@eN|selector>" "<text>" <browser> [--submit] [--debug-port N]  type via CDP Input.insertText — drives contenteditable/custom editors (Electron apps too); --submit presses Enter
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)
@@ -2136,6 +2289,16 @@ struct GhostHandsCLI {
             It NEVER changes a verb's output or exit code — a capture/log failure is swallowed
             (screenshot logged as null). Needs Screen Recording for the PNG; the log is written
             regardless. Unset/empty ⇒ no capture, no log, identical behavior.
+          GHOSTHANDS_HIGHLIGHT=1   OFF by default. When set, every act verb flashes a red box at
+            the target control's on-screen frame just before acting — so you can SEE where
+            ghosthands acts. A transparent, click-through overlay: it does NOT move the cursor or
+            steal focus (the invisibility contract holds). Observability only — it shows where the
+            AX target is, never a fake pointer; a refuse flashes nothing.
+          GHOSTHANDS_GLIDE=1   OFF by default. When set, a VISIBLE pixel click/drag (--visible)
+            eases the real cursor from where it is to the target (a watchable "mouse moving there"
+            travel) before clicking, instead of warping straight to the point. Only affects the
+            visible HID path (which already moves the cursor, the labelled exception) — never the
+            invisible AX path.
 
         <app> = bundle id, pid, or (partial) app name. Examples:
           ghosthands click "New Folder" Finder

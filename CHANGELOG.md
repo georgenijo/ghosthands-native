@@ -1,5 +1,198 @@
 # Changelog
 
+## 0.8.8-m4 — 2026-06-19 — Vision/OCR: the universal fallback eye (drive ANY app)
+
+**Added — `ocr` + `ocr-click`: locate + act on surfaces with no AX and no DOM** (a
+canvas, a game, a remote screen, a web view with no debug port). Closes the deferred
+vision/OCR fork (issue #1) and completes the locator ladder: **AX → CDP → Vision.**
+- **`ocr <app>`** — screenshot the front window (ScreenCaptureKit) and run Apple
+  **Vision** text recognition, returning every recognized line + its on-screen rect.
+  Pure read; needs Screen Recording. A *system* framework — no new SwiftPM dependency.
+- **`ocr-click "<text>" <app>`** — OCR, match the phrase (exact-beats-substring), and
+  click its center via the **visible HID** path (cursor moves — the labelled
+  exception), verified by the screenshot-diff `click-at` already enforces. REFUSES
+  when no line matches (never clicks a guessed point — OCR is the fuzziest tier) or
+  when >1 match with no exact hit.
+
+CLI + 36th MCP tool (`ocr`, the read eye; `ocr-click` is CLI like the other pixel
+verbs). Pure coordinate flip (Vision normalized/bottom-left → screen/top-left) and
+the matcher are hermetically tested (744 total, +6).
+
+**Live-verified — all three "drive any app" features composing:** `ocr Cursor` read
+20 text regions with coords off Cursor's web-rendered welcome screen (where AX saw no
+inputs), then `GHOSTHANDS_GLIDE=1 ocr-click "whoop-dashboard" Cursor` **found** the
+text via Vision, **glided** the real cursor to (1131,783), clicked, and **VERIFIED**
+by pixel-diff (32.6% changed) — opening the project. Step 3 of 3 done (glide →
+Electron-CDP → **Vision/OCR**). Version 0.8.7-m4 → 0.8.8-m4.
+
+## 0.8.7-m4 — 2026-06-19 — Electron-CDP: `web type` for custom editors
+
+**Added — `web type "<@eN|selector>" "<text>" [--submit]`: type via CDP
+`Input.insertText`.** The fix for the boundary the Cursor walkthrough exposed —
+`web fill` sets `.value`, a no-op on a **contenteditable / custom editor** (Cursor's
+agent box, Lexical/ProseMirror, Monaco). `web type` focuses the element and injects
+text the way a real keypress would (the primitive Playwright/Puppeteer use), so those
+editors accept it; `--submit` then dispatches a real Enter via
+`Input.dispatchKeyEvent`. Verified by reading the element's text back (`.value` or
+innerText); the send half is honestly reported "Enter dispatched (send unverified)".
+CLI + 35th MCP tool (`web_type`). Pure verdict + focus/read-back expressions
+hermetically tested (738 total, +3).
+
+**This makes Electron apps drivable.** An Electron app (Cursor, VS Code, Slack,
+Discord) launched with `--remote-debugging-port=N` is just Chromium — the existing
+web tier attaches and drives its DOM. **Live-verified:** `web read Cursor
+--debug-port 9333` read Cursor's real renderer DOM (27 refs + frames) where AX saw
+nothing, and `web type` earned a VERIFIED read-back on a live page. (The full
+"send a prompt to Cursor's agent" needs one more orchestration step — reliably
+*opening* the agent panel — which is UI-specific, not a `web type` limitation.)
+
+Step 2 of 3 toward "drive any app" (glide → **Electron-CDP** → Vision/OCR). Version
+0.8.6-m4 → 0.8.7-m4.
+
+## 0.8.6-m4 — 2026-06-19 — "fake mouse" glide (visible cursor travel)
+
+**Added — `GHOSTHANDS_GLIDE=1`: ease the real cursor to the target before a visible
+click.** In `.visible` HID mode (`click-at`/`drag --visible`), instead of warping the
+cursor straight to the point, glide it there over a smoothstep-eased path (~30
+samples × ~9ms ≈ 270ms) computed from the gap between the current cursor position and
+the target — the "calculate the distance and move there" idea, watchable. Off by
+default (the visible path stays fast) and scoped to the visible HID tier only — it
+never touches the invisible AX path. `PixelPath.glide` (the eased geometry: lands
+exactly on target, smoothstep-symmetric, monotonic) is pure + hermetically tested
+(735 total, +4). Step 1 of 3 toward "drive any app" (glide → Electron-CDP →
+Vision/OCR). Version 0.8.5-m4 → 0.8.6-m4.
+
+## 0.8.5-m4 — 2026-06-19 — highlight on EVERY act verb
+
+**Extended `GHOSTHANDS_HIGHLIGHT=1` from `click` to every native act verb.** Now the
+overlay box flashes wherever ghosthands acts: `click`, `type`, `set-value`,
+`doubleclick`, `act`, `focus`, `right-click`, `menu` (each item as it descends — the
+boxes walk down the menu), `scroll` (the scroll area), and `drag` (source then
+destination). Done via a shared `Highlight.flashIfEnabled(element)` called right
+before each actuation; gated by the env var, so off = zero cost everywhere. Verbs
+with no target element (`key`, `navigate`) and the CDP web verbs (page coords, not
+screen) are intentionally not wired. Live-verified: a highlighted Calculator
+sequence (keypad clicks + a `View > Basic` menu walk) flashed a box on every step
+with no cursor move / focus steal. Version 0.8.4-m4 → 0.8.5-m4.
+
+## 0.8.4-m4 — 2026-06-19 — see-where-it-acts (opt-in visual overlay)
+
+**Added — `GHOSTHANDS_HIGHLIGHT=1`: a visual overlay so a human can SEE where
+ghosthands acts.** When set, `click` flashes a red highlight box at the target
+control's on-screen frame (read from AX) just before pressing it. The paradox it
+resolves: ghosthands never moves the mouse (it acts through the AX tree), so there's
+no pointer to film — instead we draw a transparent, **click-through, non-activating**
+overlay panel (`.screenSaver` level, `ignoresMouseEvents`, `orderFrontRegardless`)
+at the element's frame, pulse it, and fade. **No cursor move, no focus steal** — the
+invisibility contract is fully intact (verified live: the frontmost app was unchanged
+across a flash). Observability only: it shows where the AX target *is*, never a fake
+pointer, and a refuse flashes nothing (the box fires only right before a real press).
+Off by default → no AppKit window is ever created, zero cost.
+
+Pure pieces (the AX→Cocoa coordinate flip + the env gate) are hermetically tested
+(731 total, +3); the panel draw is live-only. Live-verified flashing on the Cursor
+Dock tile and on a toolbar button. Version 0.8.3-m4 → 0.8.4-m4.
+
+## 0.8.3-m4 — 2026-06-19 — the app-level eye + open-an-app-by-its-Dock-icon
+
+Two additions that let a brain do the most natural thing — *"open Cursor"* → see
+what's running, then click the Dock icon — entirely through ghosthands.
+
+**Added — `apps`: list running GUI apps.** Name, bundle id, pid, and a `[frontmost]`
+marker, sorted by name; faceless daemons / XPC services excluded
+(`activationPolicy == .regular`) so the list matches the Dock + Cmd-Tab, not the
+process table. Pure read (no AX walk, no focus steal). CLI + 34th MCP tool + `--json`
+(a `{count, apps:[…]}` envelope). The app-level **eye**: answer "what's open?" before
+deciding to open or drive something.
+
+**Fixed — `click "<App>" Dock` now opens/activates an app by its Dock icon.** A Dock
+tile is an `AXDockItem`, which advertises AXPress (pressing it launches/activates the
+app — the same thing a human does clicking the Dock) but was missing from the
+control-role allowlist, so `find` saw it while `click` refused it. Added `AXDockItem`
+to `Finder.controlRoles`. Now `click "Cursor" Dock` launches Cursor. Honest verdict:
+**dispatched-unverified** (a Dock press has no in-element observable) — the launch is
+confirmed by a follow-up `apps` read, the brain verifying through the eye rather than
+the tool asserting. (A launch-witnessed VERIFIED is possible future polish.)
+
+**Architecture note (why this matters):** ghosthands is **hands + eyes, no model**.
+The "instinct" to *check the Dock → find the icon → click it* is the **brain's** job
+(the agent/LLM driving the verbs), never the tool's. These two additions give that
+brain the eye (`apps`) and the hand (`click … Dock`) for app-level control; the
+planning stays where it belongs — outside the tool. Live-verified: `apps` showed
+Cursor absent, `click "Cursor" Dock` launched it, `apps` then showed it running.
+728 hermetic tests (+4). Version 0.8.2-m4 → 0.8.3-m4.
+
+## 0.8.2-m4 — 2026-06-19 — menu bar (a DEFERRED row goes green)
+
+**Added — `menu "<A > B > C>" <app>`: drive an app's regular menu bar.** Resolves a
+` > `-separated path through the Accessibility tree — `AXMenuBar` → `AXMenuBarItem`
+→ AXPress to open → descend each `AXMenu` → AXPress the leaf — with **no cursor, no
+focus steal**. CLI + 33rd MCP tool (`menu`) + `--json` envelope.
+
+This flips a capability-matrix row that was marked **DEFERRED**. The deferral was
+about **MenuBarExtra / Control Center** (status-bar items whose AXPress is a no-op);
+a **regular app menu** (File/Edit/View/…) is fully AX-drivable, which a live probe on
+Cursor confirmed. The matrix now splits the row: regular menus ✅ (this verb),
+Control Center/MenuBarExtra still DEFERRED.
+
+**Honesty:** a menu action's effect (open a folder, run a command) is downstream and
+app-specific — there is no in-AX observable on the menu itself — so `menu` is always
+**dispatched-unverified** (AXPress accepted at each step), NEVER a fabricated success
+(mirrors `key` / `act raise`). What it DOES enforce: each segment must resolve to
+**exactly one** item (exact-beats-substring; the ellipsis menus append is matched
+naturally), and a segment matching **none or >1** item REFUSES — listing the real
+items at that level — closing any menu it opened so a refuse never leaves the app's
+menu hanging. A non-final segment with no submenu also REFUSES (path walked past a
+leaf). Pure parsing + matching are hermetically tested (724 total, +13).
+
+**Live-verified** end-to-end on Cursor, ghosthands-only: `menu "File > Open Recent >
+~/Documents/code/murmur-app" Cursor` opened the project (read back via `windows` as
+`"… — murmur-app"`), and `menu "File > Frobnicate" Cursor` refused (exit 1) listing
+all 20 real File-menu items.
+
+## 0.8.1-m4 — 2026-06-19 — web-parity level-up
+
+A fresh agent-browser-vs-ghosthands head-to-head (full 11-task battery, both driven
+directly) re-confirmed the win on capability + honesty + native reach, and surfaced
+two concrete web-driving gaps + one stale doc claim. All three closed; 711 hermetic
+tests (+9), each fix live-verified on the exact case that exposed it.
+
+**Fixed**
+- **`web read` was hiding fillable text inputs.** A render-side filter dropped any
+  digest row with no name, no value, and no form-state — which silently killed a
+  bare or `<label>`-wrapped text input that reads empty pre-fill (httpbin's
+  `custname`/`custtel`/`custemail`). The element *was* ref-stamped and fully
+  fillable; it just never appeared in `web read`, forcing a hand-written CSS
+  selector. Now any **ref-stamped (interactive) row is KEPT** even when empty — a
+  ref means actionable, never noise; a ref-less empty text/heading node still drops.
+  *Live-verified:* httpbin `web read` went 8 → **13 elements**, every field present.
+- **`web read` now derives a real accessible NAME for label-wrapped controls.** The
+  name was `aria-label || innerText` only, so a `<label>Customer name: <input></label>`
+  read blank. Added `accName()` — `aria-label` → `<label for=id>` → wrapping
+  `<label>` → innerText → `placeholder` → `name` attr (all REAL sources, never
+  fabricated; every lookup guarded). httpbin inputs now read `"Customer name:"`,
+  radios/checkboxes read `"Small"`/`"Bacon"` instead of blank — matching a screen
+  reader and agent-browser's snapshot, so the whole form is addressable by `@eN`.
+
+**Added**
+- **`web select "<@eN|selector>" "<value>" [browser]`** — drive a `<select>`
+  dropdown, the web analogue of `set-value`. Matches an option by its **value OR its
+  visible text**, sets it, fires input+change, and **reads the chosen option back**:
+  read-back == request → **VERIFIED**; the set didn't stick → dispatched-unverified;
+  the target isn't a `<select>` → **REFUSE** (`notASelect`, names the real role); no
+  option matches → **REFUSE** (`optionNotFound`, lists the real options) — never
+  leaves the prior selection and claims success. Exposed on the CLI **and** as the
+  32nd MCP tool (`web_select`). Closes the last "drop to `web eval` for a dropdown"
+  gap. *Live-verified* on the-internet/dropdown: by value (`"2"`→"Option 2"), by
+  text (`"Option 1"`), by `@ref`, and both refuse paths (exit 1).
+
+**Docs**
+- Corrected the **stale "agent-browser can't play YouTube/DRM" claim** in
+  WEB-PARITY.md + STRESS-TEST-0.8.0.md. On the 2026-06-19 re-test (agent-browser
+  0.27.0) YouTube **played** (`currentTime` advanced after a user-gesture click;
+  bare `.play()` is blocked by autoplay policy, not codecs). It is no longer a
+  ghosthands advantage; the native-app gap is the only durable structural miss.
+
 ## 0.8.0-m4 — 2026-06-18 (overnight build)
 
 The big completeness push — a production-grade, honest, invisible computer-use +

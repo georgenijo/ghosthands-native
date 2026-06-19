@@ -77,9 +77,12 @@ The identical battery was run against the competitor (vercel-labs/agent-browser)
 - **Task 9 (HN → TextEdit):** browser half only — agent-browser **cannot drive a native
   macOS app** (Electron/Chromium only). This is the capability ghosthands has and
   agent-browser structurally lacks.
-- **Task 10 (YouTube play):** its bundled Chromium **can't play DRM/H.264 video** ("Something
-  went wrong" — missing proprietary codecs/Widevine). Honestly detected (AX button stayed
-  Play); but real Brave (which ghosthands drives) plays it.
+- **Task 10 (YouTube play):** ~~its bundled Chromium **can't play DRM/H.264 video** ("Something
+  went wrong" — missing proprietary codecs/Widevine)~~. **SUPERSEDED (re-test 2026-06-19,
+  agent-browser 0.27.0):** YouTube **played** on agent-browser — `currentTime` advanced
+  0.83→4.86 after a user-gesture click (bare `.play()` is blocked by autoplay policy, not
+  codecs). The original "no codecs" reading does not reproduce; this is NOT a current
+  ghosthands advantage. The native-app gap (Task 9) is the only durable structural miss.
 
 ## The core finding — the honesty models differ fundamentally
 
@@ -101,7 +104,7 @@ The identical battery was run against the competitor (vercel-labs/agent-browser)
 |---|---|---|
 | Pure web read / click / fill | ✅ | ✅ |
 | Native macOS app (TextEdit, …) | ✅ (AX, whole Mac) | ❌ out of scope (browser/Electron only) |
-| YouTube / DRM video playback | ✅ (drives real Brave) | ❌ bundled Chromium, no codecs |
+| YouTube / DRM video playback | ✅ (drives real Brave) | ✅ (re-test 0.27.0 — plays; the original "no codecs" finding is stale) |
 | Honesty | **enforced** (verify-or-refuse) | available (agent must verify; `✓ Done` ≠ verified) |
 | Per-call speed | <0.11s typical | ~0.16–0.21s typical (both fast) |
 | Multi-element extract | trivial (`web eval`) | clunky (container text / grep the snapshot) |

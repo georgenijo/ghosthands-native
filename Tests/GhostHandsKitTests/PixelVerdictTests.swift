@@ -246,6 +246,38 @@ final class PixelVerdictTests: XCTestCase {
         XCTAssertEqual(PixelPath.interpolate(start: .zero, end: CGPoint(x: 9, y: 9), steps: 0).count, 0)
     }
 
+    // MARK: PixelPath.glide (the "fake mouse" eased travel)
+
+    /// The glide produces `steps` samples and LANDS exactly on the target (the last
+    /// point == `to`), so the visible click happens at the intended point.
+    func testGlideLandsOnTarget() {
+        let pts = PixelPath.glide(from: .zero, to: CGPoint(x: 100, y: 40), steps: 10)
+        XCTAssertEqual(pts.count, 10)
+        XCTAssertEqual(pts.last!.x, 100, accuracy: 0.0001)
+        XCTAssertEqual(pts.last!.y, 40, accuracy: 0.0001)
+    }
+
+    /// Smoothstep is symmetric: the MIDDLE sample sits at the geometric midpoint
+    /// (ease-in equals ease-out), distinguishing it from a linear ramp's offset.
+    func testGlideMidpointIsHalfway() {
+        let pts = PixelPath.glide(from: .zero, to: CGPoint(x: 200, y: 0), steps: 10)
+        // sample index 4 (i=5/10 → t=0.5 → smoothstep 0.5) is the exact midpoint.
+        XCTAssertEqual(pts[4].x, 100, accuracy: 0.0001)
+    }
+
+    /// Monotonic, eased: x never decreases along the path (no backtracking).
+    func testGlideIsMonotonic() {
+        let pts = PixelPath.glide(from: .zero, to: CGPoint(x: 300, y: 0), steps: 20)
+        for i in 1..<pts.count { XCTAssertGreaterThanOrEqual(pts[i].x, pts[i - 1].x) }
+    }
+
+    /// Degenerate step counts → a single jump straight to the target (never empty,
+    /// so a visible click still lands).
+    func testGlideZeroOrOneStepJumpsToTarget() {
+        XCTAssertEqual(PixelPath.glide(from: .zero, to: CGPoint(x: 9, y: 9), steps: 1), [CGPoint(x: 9, y: 9)])
+        XCTAssertEqual(PixelPath.glide(from: .zero, to: CGPoint(x: 9, y: 9), steps: 0), [CGPoint(x: 9, y: 9)])
+    }
+
     // MARK: PixelOutcome mode label (default invisible, visible is opt-in)
 
     func testOutcomeDefaultModeIsInvisible() {

@@ -44,6 +44,25 @@ final class CDPDigestTests: XCTestCase {
         XCTAssertEqual(CDPDigest.entries(fromEvaluate: []).count, 0)
     }
 
+    /// REGRESSION (the eval-found bug): a REF-STAMPED interactive row is KEPT even
+    /// with no name, no value, AND no state — it's an actionable control, never
+    /// noise. A bare/label-wrapped text input (httpbin's "Customer name:") that read
+    /// empty pre-fill was being DROPPED, hiding fillable fields from `web read`. The
+    /// ref is the keep signal; a ref-less empty row (real noise) still drops.
+    func testEntriesKeepRefStampedEmptyInteractive() {
+        let rows: [[String: Any]] = [
+            // A stamped-but-empty input — must survive (actionable via @e1).
+            ["ref": "e1", "role": "input", "name": "", "value": "",
+             "x": 10.0, "y": 20.0, "w": 120.0, "h": 24.0],
+            // A ref-less empty node — still dropped (genuine noise).
+            ["ref": "", "role": "h2", "name": "", "value": ""],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].ref, "@e1")
+        XCTAssertEqual(entries[0].facts.role, "AXTextField")
+    }
+
     /// A zero-sized / missing box yields no frame (honest "no frame"), never a
     /// fabricated box.
     func testZeroBoxHasNoFrame() {

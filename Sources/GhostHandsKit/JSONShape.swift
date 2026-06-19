@@ -61,6 +61,48 @@ extension JSONResult {
             fields: fields)
     }
 
+    public static func fromOCR(_ items: [OCRItem], app: String) -> JSONResult {
+        let rows: [GHJSONValue] = items.map { it in
+            .object([
+                ("text", .string(it.text)),
+                ("x", .int(Int(it.screenRect.minX))),
+                ("y", .int(Int(it.screenRect.minY))),
+                ("w", .int(Int(it.screenRect.width))),
+                ("h", .int(Int(it.screenRect.height))),
+                ("confidence", .double(Double(it.confidence))),
+            ])
+        }
+        return JSONResult(
+            verb: "ocr", status: .ok, app: app,
+            fields: [("count", .int(items.count)), ("regions", .array(rows))])
+    }
+
+    public static func fromApps(_ apps: [AppInfo]) -> JSONResult {
+        let rows: [GHJSONValue] = apps.map { a in
+            var obj: [(String, GHJSONValue)] = [("name", .string(a.name))]
+            if let b = a.bundleID { obj.append(("bundle", .string(b))) }
+            obj.append(("pid", .int(Int(a.pid))))
+            obj.append(("active", .bool(a.active)))
+            return .object(obj)
+        }
+        return JSONResult(
+            verb: "apps", status: .ok,
+            fields: [("count", .int(apps.count)), ("apps", .array(rows))])
+    }
+
+    public static func fromMenu(_ o: MenuOutcome) -> JSONResult {
+        let fields: [(String, GHJSONValue)] = [
+            ("path", .array(o.path.map { .string($0) })),
+        ]
+        return JSONResult(
+            verb: "menu",
+            // A menu action has no in-AX observable → always dispatched, never verified.
+            status: o.verified ? .verified : .dispatched,
+            app: o.app, target: o.path.joined(separator: " > "),
+            evidence: o.evidence,
+            fields: fields)
+    }
+
     public static func fromFocus(_ o: FocusOutcome) -> JSONResult {
         var fields: [(String, GHJSONValue)] = [("role", .string(o.role))]
         fields += GHJSONValue.optBool("focusedAfter", o.focusedAfter)

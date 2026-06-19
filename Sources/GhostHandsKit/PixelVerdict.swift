@@ -173,6 +173,25 @@ public enum PixelPath {
         }
         return points
     }
+
+    /// A SMOOTHSTEP-eased glide from `from` to `to` over `steps` samples — the
+    /// "fake mouse moving there" path. Unlike `interpolate` (linear, for drag
+    /// fidelity), this accelerates then decelerates (t·t·(3−2t)) so the real cursor
+    /// travels naturally to a target before a visible click. Includes the final
+    /// point (`to`) so the motion lands exactly on target; pure + unit-testable
+    /// (CGWarp / sleeps live in the caller). `steps` ≤ 1 → a single jump (`[to]`).
+    public static func glide(from: CGPoint, to: CGPoint, steps: Int) -> [CGPoint] {
+        guard steps > 1 else { return [to] }
+        var points: [CGPoint] = []
+        points.reserveCapacity(steps)
+        for i in 1...steps {
+            let raw = Double(i) / Double(steps)
+            let t = raw * raw * (3 - 2 * raw)   // smoothstep ease-in-out
+            points.append(CGPoint(x: from.x + (to.x - from.x) * t,
+                                  y: from.y + (to.y - from.y) * t))
+        }
+        return points
+    }
 }
 
 /// The PURE CLI flag parse for the pixel verbs (`click-at` / `drag`). Scans the

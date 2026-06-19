@@ -106,6 +106,7 @@ extension GhostHands {
     static func setFocused(element: Element, facts: ElementFacts, pid: pid_t,
                            settle: TimeInterval) -> (accepted: Bool, focusedAfter: Bool?) {
         // AXFocused is a Bool attribute; `true` bridges through setValue.
+        Highlight.flashIfEnabled(element)
         let accepted = element.setValue(true, forAttribute: AXAttributeNames.kAXFocusedAttribute)
         if settle > 0 { Thread.sleep(forTimeInterval: settle) }
 

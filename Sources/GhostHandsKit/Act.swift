@@ -173,6 +173,7 @@ extension GhostHands {
         let probe = EffectProbe(pid: target.pid, settle: settle)
         let witnessBefore = probe.captureBefore(of: element)
 
+        Highlight.flashIfEnabled(element)
         do {
             _ = try element.performAction(action)
         } catch {
