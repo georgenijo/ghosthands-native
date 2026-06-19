@@ -327,6 +327,12 @@ struct GhostHandsCLI {
         let submit = args.contains("--submit")
         args.removeAll { $0 == "--submit" }
         let (typeText, after) = extractFlagValue("--type", from: args)
+        // A bare `--type` (no value) must REFUSE, not silently fall through to a click
+        // (CodeRabbit): `extractFlagValue` leaves the dangling flag in `after`.
+        if after.contains("--type") {
+            refuse("act", message: "--type needs a value (the text to type); "
+                + "omit --type to click the ref", code: 2)
+        }
         guard after.count >= 2 else { usage() }
         let ref = after[0]
         let appSpec = after[1]

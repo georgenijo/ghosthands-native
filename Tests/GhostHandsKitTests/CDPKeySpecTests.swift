@@ -213,6 +213,36 @@ final class CDPKeySpecTests: XCTestCase {
         XCTAssertNil(CDPTargetPick.choose(sampleTargets(), .id("nonsuch")))
     }
 
+    func testChooseMatchReportsAmbiguityCount() {
+        // Two debuggable pages whose titles both contain "proj" → matchCount 2 (the
+        // signal the ambiguity guard refuses on); choose still returns the first.
+        let targets = [
+            t("a", title: "proj alpha", url: "u1", ws: "ws://127.0.0.1:9/a"),
+            t("b", title: "proj beta", url: "u2", ws: "ws://127.0.0.1:9/b"),
+        ]
+        let c = CDPTargetPick.choose(targets, .match("proj"))
+        XCTAssertEqual(c?.matchCount, 2)
+    }
+
+    func testAssertUnambiguousPickRefusesMultiMatch() {
+        let pages = [
+            t("a", title: "proj alpha", url: "u1", ws: "ws://127.0.0.1:9/a"),
+            t("b", title: "proj beta", url: "u2", ws: "ws://127.0.0.1:9/b"),
+        ]
+        let choice = CDPTargetPick.choose(pages, .match("proj"))!
+        XCTAssertThrowsError(
+            try GhostHands.assertUnambiguousPick(.match("proj"), choice, app: "X", pages: pages)
+        ) { e in
+            guard case GhostHandsError.cdpTargetAmbiguous = e else {
+                return XCTFail("want cdpTargetAmbiguous")
+            }
+        }
+        // An exact index/id pick is never ambiguous → no throw.
+        let idChoice = CDPTargetPick.choose(pages, .id("a"))!
+        XCTAssertNoThrow(
+            try GhostHands.assertUnambiguousPick(.id("a"), idChoice, app: "X", pages: pages))
+    }
+
     func testChooseEmptyPagesIsNil() {
         // A list with NO debuggable page → nil regardless of selector.
         let none = [t("x", title: "DevTools", url: "devtools://x", ws: "")]

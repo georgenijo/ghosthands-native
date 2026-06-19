@@ -913,6 +913,7 @@ extension GhostHands {
                 query: pickQuery(pick), app: target.name,
                 available: pages.map(CDPTargetPick.label))
         }
+        try assertUnambiguousPick(pick, choice, app: target.name, pages: pages)
         let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
         let result = try await session.call("Runtime.evaluate", params: [
@@ -1034,9 +1035,22 @@ extension GhostHands {
                 query: pickQuery(pick), app: target.name,
                 available: pages.map(CDPTargetPick.label))
         }
+        try assertUnambiguousPick(pick, choice, app: target.name, pages: pages)
         let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
         return session
+    }
+
+    /// REFUSE a `--target <substring>` that matched MORE THAN ONE debuggable page
+    /// (the refuse-on-ambiguity rule) — the exact `.index`/`.id` picks and the
+    /// default are unambiguous by construction, so only `.match` is guarded here.
+    static func assertUnambiguousPick(_ pick: CDPTargetPick.Selector?,
+                                      _ choice: CDPTargetPick.Choice,
+                                      app: String, pages: [CDPTarget]) throws {
+        if case .match = pick, choice.matchCount > 1 {
+            throw GhostHandsError.cdpTargetAmbiguous(
+                query: pickQuery(pick), app: app, available: pages.map(CDPTargetPick.label))
+        }
     }
 
     /// Render a `--target` selector for the `cdpTargetNotFound` REFUSE message. A

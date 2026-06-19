@@ -70,7 +70,9 @@ extension GhostHands {
         // hands back honestly rather than fabricating controls.)
         var forest = SnapshotWalker.forest(of: target.element)
         if SnapshotRender.count(forest) == 0 {
-            Thread.sleep(forTimeInterval: 0.4)
+            // `see` is async, so yield the cold-tree settle instead of blocking the
+            // MainActor with a Thread.sleep (CodeRabbit).
+            try? await Task.sleep(for: .milliseconds(400))
             forest = SnapshotWalker.forest(of: Element(AXUIElementCreateApplication(target.pid)))
         }
         var axInputs: [SeeInput] = []

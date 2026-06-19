@@ -184,15 +184,15 @@ extension GhostHands {
         case .hand(.cdpClick):
             let o = try await webClick(
                 selector: record.cdpRef!, browser: target.name, lens: .auto,
-                debugPort: snapshot?.port ?? 9222, pick: cdpPick(snapshot))
+                debugPort: try cdpPort(snapshot, ref: ref), pick: cdpPick(snapshot))
             return result(record, ref: ref, app: target.name, tier: ActHand.cdpClick,
                           verified: o.verified, evidence: verdictText(o.verdict))
 
         case .hand(.cdpType):
             let o = try await webType(
                 selector: record.cdpRef!, text: typeText!, submit: submit,
-                browser: target.name, lens: .auto, debugPort: snapshot?.port ?? 9222,
-                pick: cdpPick(snapshot))
+                browser: target.name, lens: .auto,
+                debugPort: try cdpPort(snapshot, ref: ref), pick: cdpPick(snapshot))
             return result(record, ref: ref, app: target.name, tier: ActHand.cdpType,
                           verified: o.verified, evidence: verdictText(o.verdict))
 
@@ -224,6 +224,18 @@ extension GhostHands {
     /// Nil (older snapshot / single-page) → the historical first-page default.
     private static func cdpPick(_ snapshot: SeeSnapshot?) -> CDPTargetPick.Selector? {
         snapshot?.cdpTargetId.map { .id($0) }
+    }
+
+    /// The CDP port a cdp `@ref` must reattach on. A cdp record implies `see` read
+    /// over CDP, so a port WAS recorded; if it somehow isn't (a hand-edited / older
+    /// snapshot), REFUSE rather than guess 9222 — which could attach to an unrelated
+    /// debug target (CodeRabbit).
+    private static func cdpPort(_ snapshot: SeeSnapshot?, ref: String) throws -> Int {
+        guard let port = snapshot?.port else {
+            throw GhostHandsError.refStale(
+                ref: ref, reason: "the see recorded no CDP port for this ref")
+        }
+        return port
     }
 
     /// Flatten a `WebActuate.Verdict` to (verified flag already read) its text.

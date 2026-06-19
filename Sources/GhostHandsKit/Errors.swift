@@ -124,6 +124,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than drive an arbitrary page — the available pages are listed
     /// so the caller can pick a real one by index or a real substring.
     case cdpTargetNotFound(query: String, app: String, available: [String])
+    /// A `--target <substring>` matched MORE THAN ONE debuggable page — we REFUSE
+    /// rather than drive the first of several (the refuse-on-ambiguity rule). The
+    /// caller should pin exactly with `--target #<id>` or a 1-based `--target <N>`.
+    case cdpTargetAmbiguous(query: String, app: String, available: [String])
     /// A generic CDP transport / decode / deadline / non-loopback failure: a
     /// malformed `/json/list` body, a never-arriving reply that hit its deadline,
     /// a CDP error reply, or a refused non-loopback `webSocketDebuggerUrl`.
@@ -324,6 +328,12 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
             return "no debuggable page matching \(query.debugDescription) in \(app) — "
                 + "refusing to drive an arbitrary renderer; pages here: \(list)"
+        case let .cdpTargetAmbiguous(query, app, available):
+            let list = available.isEmpty ? "(none)"
+                : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
+            return "\(query.debugDescription) matches more than one page in \(app) — "
+                + "refusing to drive the first of several; pin one with --target #<id> "
+                + "or a 1-based index. pages: \(list)"
         case let .cdpPortClosed(app, port):
             return "no DevTools port on 127.0.0.1:\(port) for \(app) — relaunch "
                 + "with --remote-debugging-port=\(port), or use `web read` (AX); "
