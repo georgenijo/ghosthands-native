@@ -811,6 +811,7 @@ extension GhostHands {
     public static func webRead(browser: String, lens: WebLens,
                                debugPort: Int = 9222,
                                relaunch: Bool = false,
+                               pick: CDPTargetPick.Selector? = nil,
                                settle: TimeInterval = 0.8)
         async throws -> (result: WebReadResult, served: ServedLens) {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
@@ -826,14 +827,16 @@ extension GhostHands {
             // relaunch on the OS-chosen port; closed without it → refuse.
             let (port, _) = try await resolveCDPPort(
                 target: target, requestedPort: debugPort, relaunch: relaunch)
-            return (try await webReadCDP(target: target, port: port), .cdp(port: port))
+            return (try await webReadCDP(target: target, port: port, pick: pick),
+                    .cdp(port: port))
         case .auto:
             if WebSurface.isBrowserSurface(bundleID: target.app.bundleIdentifier),
                await CDPDiscovery.isPortOpen(debugPort) {
-                return (try await webReadCDP(target: target, port: debugPort),
+                return (try await webReadCDP(target: target, port: debugPort, pick: pick),
                         .cdp(port: debugPort))
             }
-            // SILENT fall-through to AX — no regression, no refuse.
+            // SILENT fall-through to AX — no regression, no refuse. (`--target` is a
+            // CDP-only concept; the AX path ignores it, as the AX tree has one app.)
             return (try webRead(browser: browser, settle: settle), .ax)
         }
     }
@@ -878,17 +881,26 @@ extension GhostHands {
     /// returns only the DOM the page actually exposed; an empty page reads empty.
     /// Slice 1's digest is flat (point-in-time, no nested refs).
     @MainActor
-    static func webReadCDP(target: Target, port: Int) async throws -> WebReadResult {
+    static func webReadCDP(target: Target, port: Int,
+                           pick: CDPTargetPick.Selector? = nil) async throws -> WebReadResult {
         // Connect to a PAGE target's OWN debugger socket, not the browser-level
         // /json/version endpoint — the browser endpoint has no Runtime domain
-        // (it answers "Runtime.enable wasn't found"). Slice 1 reads the FIRST
-        // debuggable page target; per-tab selection (by url / index) is a later
-        // slice. Honest empty when the port lists no debuggable page.
+        // (it answers "Runtime.enable wasn't found"). Default reads the FIRST
+        // debuggable page target; `--target <n|title>` picks a specific renderer
+        // (multi-window Electron). Honest empty when the port lists no debuggable
+        // page at all; a `--target` that matches nothing REFUSES (never an arbitrary
+        // renderer).
         let targets = try await CDPDiscovery.list(port: port, app: target.name)
-        guard let page = targets.first(where: { !$0.webSocketDebuggerUrl.isEmpty }) else {
+        let pages = targets.filter { !$0.webSocketDebuggerUrl.isEmpty }
+        guard !pages.isEmpty else {
             return WebReadResult(app: target.name, entries: [], hasWebArea: false)
         }
-        let session = try CDPSession.open(wsURL: page.webSocketDebuggerUrl)
+        guard let choice = CDPTargetPick.choose(targets, pick) else {
+            throw GhostHandsError.cdpTargetNotFound(
+                query: pickQuery(pick), app: target.name,
+                available: pages.map(CDPTargetPick.label))
+        }
+        let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
         let result = try await session.call("Runtime.evaluate", params: [
             "expression": CDPDigest.evaluateExpression,
@@ -909,11 +921,12 @@ extension GhostHands {
     /// an honest empty digest.
     @MainActor
     public static func webReadScoped(selector: String, browser: String, lens: WebLens,
-                                     debugPort: Int = 9222, relaunch: Bool = false)
+                                     debugPort: Int = 9222, relaunch: Bool = false,
+                                     pick: CDPTargetPick.Selector? = nil)
         async throws -> (result: WebReadResult, served: ServedLens) {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
         let reply = try await evaluateObject(
             session, CDPDigest.scopedEvaluateExpression(container: selector))
         guard WebActuate.boolValue(reply["found"]) else {
@@ -989,17 +1002,37 @@ extension GhostHands {
     /// selector would lie about the cause. `cdpPortClosed` is raised earlier (by
     /// `resolveForSelectorVerb`) when the port itself is unreachable.
     @MainActor
-    static func openPageSession(target: Target, port: Int)
+    static func openPageSession(target: Target, port: Int,
+                               pick: CDPTargetPick.Selector? = nil)
         async throws -> CDPSession {
         let targets = try await CDPDiscovery.list(port: port, app: target.name)
-        guard let page = targets.first(where: { !$0.webSocketDebuggerUrl.isEmpty }) else {
+        let pages = targets.filter { !$0.webSocketDebuggerUrl.isEmpty }
+        guard !pages.isEmpty else {
             throw GhostHandsError.cdpTransport(
                 reason: "no debuggable page target on port \(port) for "
                     + "\(target.name) — open a tab to actuate")
         }
-        let session = try CDPSession.open(wsURL: page.webSocketDebuggerUrl)
+        // Default → first debuggable page (unchanged). `--target <n|title>` picks a
+        // specific renderer; a no-match REFUSES rather than drive an arbitrary page.
+        guard let choice = CDPTargetPick.choose(targets, pick) else {
+            throw GhostHandsError.cdpTargetNotFound(
+                query: pickQuery(pick), app: target.name,
+                available: pages.map(CDPTargetPick.label))
+        }
+        let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
         return session
+    }
+
+    /// Render a `--target` selector for the `cdpTargetNotFound` REFUSE message. A
+    /// `nil` selector never reaches that refuse (it resolves to the first page), so
+    /// this only formats the index / substring the user actually passed.
+    static func pickQuery(_ pick: CDPTargetPick.Selector?) -> String {
+        switch pick {
+        case .none:             return ""
+        case let .index(n):     return "#\(n)"
+        case let .match(q):     return q
+        }
     }
 
     /// `web click <selector>` over CDP. ONE probe (occlusion + geometry), the pure
@@ -1013,11 +1046,12 @@ extension GhostHands {
     ///               dispatched-unverified.
     @MainActor
     public static func webClick(selector: String, browser: String, lens: WebLens,
-                                debugPort: Int = 9222, relaunch: Bool = false)
+                                debugPort: Int = 9222, relaunch: Bool = false,
+                                pick: CDPTargetPick.Selector? = nil)
         async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
 
         // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
         let resolved = WebRef.resolve(selector)
@@ -1052,11 +1086,12 @@ extension GhostHands {
     @MainActor
     public static func webFill(selector: String, text: String, browser: String,
                                lens: WebLens, debugPort: Int = 9222,
-                               relaunch: Bool = false)
+                               relaunch: Bool = false,
+                               pick: CDPTargetPick.Selector? = nil)
         async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
 
         // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
         let resolved = WebRef.resolve(selector)
@@ -1095,11 +1130,12 @@ extension GhostHands {
     @MainActor
     public static func webSelect(selector: String, value: String, browser: String,
                                  lens: WebLens, debugPort: Int = 9222,
-                                 relaunch: Bool = false)
+                                 relaunch: Bool = false,
+                                 pick: CDPTargetPick.Selector? = nil)
         async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
 
         // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
         let resolved = WebRef.resolve(selector)
@@ -1139,11 +1175,12 @@ extension GhostHands {
     @MainActor
     public static func webType(selector: String, text: String, submit: Bool,
                                browser: String, lens: WebLens, debugPort: Int = 9222,
-                               relaunch: Bool = false)
+                               relaunch: Bool = false,
+                               pick: CDPTargetPick.Selector? = nil)
         async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
 
         let resolved = WebRef.resolve(selector)
         // Focus the target so the inserted text lands in it; confirm it exists.
@@ -1192,6 +1229,63 @@ extension GhostHands {
         _ = try await session.call("Input.dispatchKeyEvent", params: up)
     }
 
+    // MARK: - web key (fire an app keybinding/accelerator over CDP)
+
+    /// A `web key` result: the browser, the chord posted, and the served port. A key
+    /// dispatch has NO in-page observable (no read-back, no nav), so there is no
+    /// verdict enum — it is ALWAYS dispatched-unverified, exactly like the native
+    /// `key` verb / `window raise`. The parse REFUSES a bad chord upstream; a
+    /// dispatched chord is never claimed to have "worked".
+    public struct WebKeyResult: Sendable {
+        public let app: String
+        public let chord: String
+        public let port: Int
+        public init(app: String, chord: String, port: Int) {
+            self.app = app
+            self.chord = chord
+            self.port = port
+        }
+    }
+
+    /// `web key "<chord>" <browser> [--debug-port N] [--target <n|title>]` — fire a
+    /// real key/chord over CDP `Input.dispatchKeyEvent` so an app KEYBINDING or
+    /// accelerator triggers (e.g. Cursor's ⇧⌘L agent panel) — something neither AX
+    /// nor a `.value` set can reach. The chord is PARSED FIRST, so a bad spec
+    /// (`unknownKey` / `badKeySpec`) REFUSES before any browser/socket is touched; a
+    /// `--target` that matches no renderer REFUSES. The dispatch is reported
+    /// dispatched-unverified — a keystroke has no self-observable, so we never fake
+    /// that the binding fired.
+    @MainActor
+    public static func webKey(chord: String, browser: String, lens: WebLens,
+                              debugPort: Int = 9222, relaunch: Bool = false,
+                              pick: CDPTargetPick.Selector? = nil)
+        async throws -> WebKeyResult {
+        let spec = try CDPKeySpec.parse(chord)
+        let (target, port) = try await resolveForSelectorVerb(
+            browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
+        try await dispatchChord(session, spec)
+        return WebKeyResult(app: target.name, chord: spec.name, port: port)
+    }
+
+    /// Dispatch one parsed chord as a CDP keyDown+keyUp pair carrying the DOM
+    /// `key`/`code`, the Windows VK, and the modifier bitfield — the shape Chromium
+    /// matches accelerators on. Generalizes `dispatchEnter` to any chord.
+    @MainActor
+    static func dispatchChord(_ session: CDPSession, _ spec: CDPKeySpec) async throws {
+        let down: [String: Any] = [
+            "type": "keyDown",
+            "key": spec.key, "code": spec.code,
+            "windowsVirtualKeyCode": spec.windowsVirtualKeyCode,
+            "nativeVirtualKeyCode": spec.windowsVirtualKeyCode,
+            "modifiers": spec.modifiers,
+        ]
+        var up = down
+        up["type"] = "keyUp"
+        _ = try await session.call("Input.dispatchKeyEvent", params: down)
+        _ = try await session.call("Input.dispatchKeyEvent", params: up)
+    }
+
     // MARK: See-the-words backup (web click/fill --text) — issue #7 secondary path
 
     /// `web click --text "<visible>" [--nth N]` — click the control a HUMAN would
@@ -1201,10 +1295,12 @@ extension GhostHands {
     @MainActor
     public static func webClickByText(text: String, nth: Int?, browser: String,
                                       lens: WebLens, debugPort: Int = 9222,
-                                      relaunch: Bool = false) async throws -> WebActuateResult {
+                                      relaunch: Bool = false,
+                                      pick: CDPTargetPick.Selector? = nil)
+        async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
         let label = try await resolveByText(session, target: target, text: text,
                                             nth: nth, fillable: false)
         // Act on the stamped pick through the SAME occlusion + verify path.
@@ -1232,10 +1328,12 @@ extension GhostHands {
     @MainActor
     public static func webFillByText(text: String, value: String, nth: Int?,
                                      browser: String, lens: WebLens, debugPort: Int = 9222,
-                                     relaunch: Bool = false) async throws -> WebActuateResult {
+                                     relaunch: Bool = false,
+                                     pick: CDPTargetPick.Selector? = nil)
+        async throws -> WebActuateResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
         let label = try await resolveByText(session, target: target, text: text,
                                             nth: nth, fillable: true)
         let probe = try await evaluateObject(
@@ -1467,11 +1565,12 @@ extension GhostHands {
     ///               exposed — never a fabricated attribute or style.
     @MainActor
     public static func webHtml(selector: String, browser: String, lens: WebLens,
-                               debugPort: Int = 9222, relaunch: Bool = false)
+                               debugPort: Int = 9222, relaunch: Bool = false,
+                               pick: CDPTargetPick.Selector? = nil)
         async throws -> WebHtmlResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
         // Resolve an `@eN` ref to its `data-gh-ref` selector (CSS passes through).
         let resolved = WebRef.resolve(selector)
         let probe = try await evaluateObject(
@@ -1499,11 +1598,12 @@ extension GhostHands {
     ///   else            → the returned value, stringified for printing.
     @MainActor
     public static func webEval(js: String, browser: String, lens: WebLens,
-                               debugPort: Int = 9222, relaunch: Bool = false)
+                               debugPort: Int = 9222, relaunch: Bool = false,
+                               pick: CDPTargetPick.Selector? = nil)
         async throws -> WebEvalResult {
         let (target, port) = try await resolveForSelectorVerb(
             browser: browser, lens: lens, port: debugPort, relaunch: relaunch)
-        let session = try await openPageSession(target: target, port: port)
+        let session = try await openPageSession(target: target, port: port, pick: pick)
         // Evaluate the caller's expression directly (the WHOLE point of `web eval`
         // is the raw expression — it is the verb's input, never trusted as our code
         // beyond what the user typed). We DON'T go through `evaluateObject` because

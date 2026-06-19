@@ -172,6 +172,24 @@ agent-browser's driving feel, ghosthands' honesty + native reach kept. See
 [`docs/WEB-PARITY.md`](./docs/WEB-PARITY.md) verdict. Optional polish left: #6
 (post-click DOM read-back) + #5 (native `--nth`/`--role`/`--text`).
 
+**Feature A — "drive any app" turnkey (in progress).** Closing the two Electron
+gaps the Cursor walkthrough exposed: a keybinding-only command can't be fired, and
+multi-window Electron forces guessing which renderer. Three looped slices:
+- **A1 ✅ shipped (0.8.9-m4)** — `web key "<chord>" <browser>` fires an app
+  keybinding/accelerator over CDP `Input.dispatchKeyEvent` (the ⇧⌘L-class command AX
+  can't reach), always dispatched-unverified; **`--target <n|title>`** picks WHICH
+  CDP page/renderer the web verbs drive (default first, no-match REFUSES). Pure
+  `CDPKeySpec`/`CDPTargetPick` hermetically tested; live-verified on an isolated
+  throwaway Brave (a `keydown` handler received `cmd+shift+L` exactly; `--target`
+  index/substring refuse paths proven). 37th MCP tool. Honesty review PASS.
+- **A2 — `see <app>`** (NEXT): one fused eye merging AX + CDP DOM + Vision OCR into a
+  single ranked, `@ref`-stamped element list (ref, role, name, rect, source, best
+  actuation tier).
+- **A3 — `act "@ref" <app>`**: the unified actuator — auto-pick the hand by source
+  (AX press / CDP click-type / HID click), verify-or-refuse, stale-ref REFUSES.
+  Capstone: drive Cursor's agent end-to-end with `web key` + `see`/`act`, no
+  hand-built recipe.
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.

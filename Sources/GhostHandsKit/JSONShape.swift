@@ -173,6 +173,17 @@ extension JSONResult {
             fields: [("port", .int(r.port))] + GHJSONValue.optString("picked", r.note))
     }
 
+    /// `web key` — ALWAYS dispatched (a keystroke has no in-page observable, like the
+    /// native `key` verb). The chord is the target; the served port a field.
+    public static func fromWebKey(_ r: GhostHands.WebKeyResult) -> JSONResult {
+        return JSONResult(
+            verb: "web key",
+            status: .dispatched,
+            app: r.app, target: r.chord,
+            evidence: "key dispatched over CDP; no in-page observable — effect unverified",
+            fields: [("port", .int(r.port))])
+    }
+
     // MARK: window mutate / raise
 
     public static func fromWindowMutate(_ o: WindowMutateOutcome) -> JSONResult {

@@ -434,6 +434,7 @@ struct GhostHandsCLI {
         case "click": await runWebClick(tail)
         case "fill": await runWebFill(tail)
         case "type": await runWebType(tail)
+        case "key": await runWebKey(tail)
         case "select": await runWebSelect(tail)
         case "html": await runWebHtml(tail)
         case "eval": await runWebEval(tail)
@@ -460,10 +461,12 @@ struct GhostHandsCLI {
     /// port, else 9222) via `WebSession.effectivePort`. So a managed session
     /// auto-targets without changing the historical default.
     static func parseWebLens(_ args: [String])
-        -> (lens: WebLens, port: Int?, relaunch: Bool, positional: [String]) {
+        -> (lens: WebLens, port: Int?, relaunch: Bool,
+            pick: CDPTargetPick.Selector?, positional: [String]) {
         var lens: WebLens = .auto
         var port: Int?
         var relaunch = false
+        var pick: CDPTargetPick.Selector?
         var positional: [String] = []
         var i = 0
         while i < args.count {
@@ -474,10 +477,16 @@ struct GhostHandsCLI {
             case "--debug-port":
                 if i + 1 < args.count, let p = Int(args[i + 1]) { port = p; i += 2 }
                 else { i += 1 }
+            case "--target":
+                // `--target <n|title>` picks WHICH page/renderer a CDP verb drives
+                // (multi-window Electron). All-digit → 1-based index, else a
+                // title/url substring; a no-match REFUSES at the leaf.
+                if i + 1 < args.count { pick = CDPTargetPick.parse(args[i + 1]); i += 2 }
+                else { i += 1 }
             default: positional.append(args[i]); i += 1
             }
         }
-        return (lens, port, relaunch, positional)
+        return (lens, port, relaunch, pick, positional)
     }
 
     /// Extract a `<flag> <value>` pair from `args`, returning the value (nil if the
@@ -549,7 +558,7 @@ struct GhostHandsCLI {
     /// flag (filtered out of the positionals). Mirrors the selector-verb wiring.
     static func parseExtract(_ rest: [String])
         -> (lens: WebLens, port: Int, relaunch: Bool, all: Bool, positional: [String], session: WebSessionInfo?) {
-        let (lens, parsedPort, relaunch, raw) = parseWebLens(scanJSON(rest))
+        let (lens, parsedPort, relaunch, _, raw) = parseWebLens(scanJSON(rest))
         let all = raw.contains("--all")
         let positional = raw.filter { $0 != "--all" }
         let session = WebSessionStore.load()
@@ -731,7 +740,7 @@ struct GhostHandsCLI {
         // Pre-extract `--in <css>` (scope the digest to a container, issue #11)
         // before the lens scan so its value isn't mistaken for the browser arg.
         let (scope, afterScope) = extractFlagValue("--in", from: scanJSON(rest))
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterScope)
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(afterScope)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
         guard let browser = WebSession.effectiveBrowser(
@@ -742,10 +751,11 @@ struct GhostHandsCLI {
                 // Scoped read is CDP-only (a CSS scope has no AX equivalent).
                 (result, served) = try await GhostHands.webReadScoped(
                     selector: scope, browser: browser, lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
             } else {
                 (result, served) = try await GhostHands.webRead(
-                    browser: browser, lens: lens, debugPort: port, relaunch: relaunch)
+                    browser: browser, lens: lens, debugPort: port,
+                    relaunch: relaunch, pick: pick)
             }
             if jsonMode {
                 JSONResult.fromWebRead(result, served: served).emit()
@@ -774,7 +784,8 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebTabs(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        // `web tabs` lists ALL pages, so `--target` (pick ONE) is meaningless here.
+        let (lens, parsedPort, relaunch, _, positional) = parseWebLens(scanJSON(rest))
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
         guard let browser = WebSession.effectiveBrowser(
@@ -830,7 +841,7 @@ struct GhostHandsCLI {
     @MainActor
     static func runWebClick(_ rest: [String]) async {
         let (textLoc, nth, afterLoc) = parseTextLocator("web click", scanJSON(rest))
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterLoc)
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(afterLoc)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
         do {
@@ -841,7 +852,7 @@ struct GhostHandsCLI {
                     explicit: positional.first, session: session) else { usage() }
                 result = try await GhostHands.webClickByText(
                     text: textLoc, nth: nth, browser: browser, lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
             } else {
                 // web click <@eN|selector> [browser]
                 guard let selector = positional.first else { usage() }
@@ -850,7 +861,7 @@ struct GhostHandsCLI {
                     explicit: explicitBrowser, session: session) else { usage() }
                 result = try await GhostHands.webClick(
                     selector: selector, browser: browser, lens: lens, debugPort: port,
-                    relaunch: relaunch)
+                    relaunch: relaunch, pick: pick)
             }
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
@@ -864,7 +875,7 @@ struct GhostHandsCLI {
     @MainActor
     static func runWebFill(_ rest: [String]) async {
         let (textLoc, nth, afterLoc) = parseTextLocator("web fill", scanJSON(rest))
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(afterLoc)
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(afterLoc)
         let session = WebSessionStore.load()
         let port = WebSession.effectivePort(explicit: parsedPort, session: session)
         do {
@@ -877,7 +888,7 @@ struct GhostHandsCLI {
                     explicit: explicitBrowser, session: session) else { usage() }
                 result = try await GhostHands.webFillByText(
                     text: textLoc, value: value, nth: nth, browser: browser,
-                    lens: lens, debugPort: port, relaunch: relaunch)
+                    lens: lens, debugPort: port, relaunch: relaunch, pick: pick)
             } else {
                 // web fill <@eN|selector> <text> [browser]
                 guard positional.count >= 2 else { usage() }
@@ -888,7 +899,7 @@ struct GhostHandsCLI {
                     explicit: explicitBrowser, session: session) else { usage() }
                 result = try await GhostHands.webFill(
                     selector: selector, text: text, browser: browser, lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
             }
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
@@ -901,7 +912,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebSelect(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(scanJSON(rest))
         // web select <@eN|selector> <value> [browser]
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
@@ -914,7 +925,7 @@ struct GhostHandsCLI {
         do {
             let result = try await GhostHands.webSelect(
                 selector: selector, value: value, browser: browser, lens: lens,
-                debugPort: port, relaunch: relaunch)
+                debugPort: port, relaunch: relaunch, pick: pick)
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
@@ -929,7 +940,7 @@ struct GhostHandsCLI {
         var args = scanJSON(rest)
         let submit = args.contains("--submit")
         args.removeAll { $0 == "--submit" }
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(args)
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(args)
         // web type <@eN|selector> <text> [browser] [--submit]
         guard positional.count >= 2 else { usage() }
         let selector = positional[0]
@@ -942,7 +953,7 @@ struct GhostHandsCLI {
         do {
             let result = try await GhostHands.webType(
                 selector: selector, text: text, submit: submit, browser: browser,
-                lens: lens, debugPort: port, relaunch: relaunch)
+                lens: lens, debugPort: port, relaunch: relaunch, pick: pick)
             if jsonMode { JSONResult.fromWebActuate(result).emit() }
             else { print(reportWebActuate(result)) }
         } catch let error as GhostHandsError {
@@ -950,6 +961,36 @@ struct GhostHandsCLI {
         } catch {
             failUnexpected("web type")
         }
+    }
+
+    @MainActor
+    static func runWebKey(_ rest: [String]) async {
+        // web key <chord> [browser] [--debug-port N] [--target n|title]
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(scanJSON(rest))
+        guard let chord = positional.first else { usage() }
+        let session = WebSessionStore.load()
+        let port = WebSession.effectivePort(explicit: parsedPort, session: session)
+        let explicitBrowser = positional.count >= 2 ? positional[1] : nil
+        guard let browser = WebSession.effectiveBrowser(
+            explicit: explicitBrowser, session: session) else { usage() }
+        do {
+            let result = try await GhostHands.webKey(
+                chord: chord, browser: browser, lens: lens, debugPort: port,
+                relaunch: relaunch, pick: pick)
+            if jsonMode { JSONResult.fromWebKey(result).emit() }
+            else { print(reportWebKey(result)) }
+        } catch let error as GhostHandsError {
+            failWebActuate("web key", error)
+        } catch {
+            failUnexpected("web key")
+        }
+    }
+
+    /// Honest one-liner for `web key`: ALWAYS dispatched-unverified — a keystroke has
+    /// no in-page observable, so we report the dispatch plainly, never a success.
+    static func reportWebKey(_ r: GhostHands.WebKeyResult) -> String {
+        return "key \(r.chord.debugDescription) dispatched to \(r.app) — no in-page "
+            + "observable (effect unverified) (via CDP, port \(r.port))"
     }
 
     /// Honest one-liner for a selector actuation. VERIFIED quotes the observed
@@ -982,7 +1023,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebHtml(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(scanJSON(rest))
         // web html <selector> [browser]   (browser optional with a managed session)
         guard let selector = positional.first else { usage() }
         let session = WebSessionStore.load()
@@ -993,7 +1034,7 @@ struct GhostHandsCLI {
         do {
             let result = try await GhostHands.webHtml(
                 selector: selector, browser: browser, lens: lens, debugPort: port,
-                relaunch: relaunch)
+                relaunch: relaunch, pick: pick)
             if jsonMode {
                 JSONResult.fromWebHtml(result).emit()
                 return
@@ -1011,7 +1052,7 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runWebEval(_ rest: [String]) async {
-        let (lens, parsedPort, relaunch, positional) = parseWebLens(scanJSON(rest))
+        let (lens, parsedPort, relaunch, pick, positional) = parseWebLens(scanJSON(rest))
         // web eval <js> [browser]   (browser optional with a managed session)
         guard let js = positional.first else { usage() }
         let session = WebSessionStore.load()
@@ -1022,7 +1063,7 @@ struct GhostHandsCLI {
         do {
             let result = try await GhostHands.webEval(
                 js: js, browser: browser, lens: lens, debugPort: port,
-                relaunch: relaunch)
+                relaunch: relaunch, pick: pick)
             if jsonMode {
                 JSONResult.fromWebEval(result).emit()
                 return
@@ -2237,6 +2278,7 @@ struct GhostHandsCLI {
           ghosthands web fill --text "<label>" "<value>" [browser] [--nth N]                       …or by the field's visible label (placeholder/aria-label/<label>)
           ghosthands web select "<@eN|selector>" "<value>" <browser> [--cdp|--debug-port N] [--relaunch]  choose a <select> dropdown option by its value or visible text, verified by read-back
           ghosthands web type "<@eN|selector>" "<text>" <browser> [--submit] [--debug-port N]  type via CDP Input.insertText — drives contenteditable/custom editors (Electron apps too); --submit presses Enter
+          ghosthands web key "<chord>" <browser> [--debug-port N] [--target n|title]  fire an app keybinding/accelerator over CDP (e.g. "cmd+shift+l" for Cursor's agent panel); always dispatched-unverified
           ghosthands web html "<@eN|selector>" <browser> [--cdp|--debug-port N] [--relaunch]         dump an element's outerHTML + attrs + computed style by @eN ref or CSS selector (CDP-only read)
           ghosthands web eval "<js>" <browser> [--cdp|--debug-port N] [--relaunch]               evaluate a JS expression and print the returned value (CDP-only power tool)
           ghosthands web text "<@eN|css>" [browser] [--all]                          visible text of the matched element(s) — no eval (--all: one line per match)
@@ -2246,6 +2288,8 @@ struct GhostHandsCLI {
           (--relaunch: opt-in. When the debug port is CLOSED, launch a NEW, ISOLATED throwaway browser
            instance — ephemeral OS-chosen port + a fresh temp profile (never your real cookies/history).
            Without it, a closed port still refuses. Never relaunches silently, never touches your profile.)
+          (--target <n|title>: pick WHICH CDP page/renderer a web verb drives — a 1-based index or a
+           title/url substring (default: first debuggable page). For multi-window Electron apps; a no-match REFUSES.)
           ghosthands navigate "<url>" [browser]       load a URL in a browser, verify by reading the page URL back
           ghosthands windows <app>                    list windows (id, title, frame, display, flags) — pure read
           ghosthands window move <x> <y> <app> [--window <id|title>]    set position (invisible AX set), verified by read-back

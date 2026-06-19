@@ -112,3 +112,84 @@ public struct CDPTarget: Sendable, Equatable {
         return bare == "127.0.0.1" || bare == "::1" || bare == "localhost"
     }
 }
+
+// MARK: - --target page selection (PURE)
+
+/// Choose WHICH debuggable page/renderer a CDP verb drives, from `/json/list`.
+/// The default (no selector) keeps the historical behavior — the FIRST debuggable
+/// page — so every existing call site is unchanged; `--target` adds the ability to
+/// aim at a specific renderer, which matters for multi-window Electron apps where
+/// `/json/list` reports several page targets and the first is not the one you want.
+///
+/// PURE: takes the decoded `[CDPTarget]` + an optional selector, returns the chosen
+/// target (or nil → the caller REFUSES `cdpTargetNotFound`). No IO — unit-tested on
+/// fabricated target lists, mirroring `LocatorSpec` / `WebFind` ranking.
+public enum CDPTargetPick {
+    /// What `--target <n|title>` resolves to: an all-digit arg is a 1-based INDEX
+    /// among the debuggable pages; anything else is a case-insensitive SUBSTRING of
+    /// a page's title OR url.
+    public enum Selector: Sendable, Equatable {
+        case index(Int)
+        case match(String)
+    }
+
+    /// The chosen page plus the reporting facts a `--target` pick surfaces (a pick
+    /// is never silent): the target, its 1-based position among debuggable pages,
+    /// and how many pages matched (so the caller can hint at `--target N` to choose
+    /// another on a multi-match).
+    public struct Choice: Sendable, Equatable {
+        public let target: CDPTarget
+        public let index: Int
+        public let matchCount: Int
+
+        public init(target: CDPTarget, index: Int, matchCount: Int) {
+            self.target = target
+            self.index = index
+            self.matchCount = matchCount
+        }
+    }
+
+    /// Parse a raw `--target` argument: an all-digit value (≥1) → `.index`, else a
+    /// `.match` substring. An empty/whitespace value falls to `.match("")`, which
+    /// matches every page (the caller still picks the first) — never a crash.
+    public static func parse(_ raw: String) -> Selector {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        if let n = Int(trimmed), n >= 1 { return .index(n) }
+        return .match(trimmed)
+    }
+
+    /// Choose among the DEBUGGABLE page targets (those with a non-empty
+    /// `webSocketDebuggerUrl` — the only ones we can attach to). Returns nil when
+    /// nothing matches, so the caller REFUSES rather than drive an arbitrary page:
+    /// - no selector → the FIRST debuggable page (historical default).
+    /// - `.index(n)` → the n-th debuggable page (1-based); out of range → nil.
+    /// - `.match(q)` → the first page whose title OR url contains `q`
+    ///   (case-insensitive); no match → nil. `matchCount` reports how many matched.
+    public static func choose(_ targets: [CDPTarget], _ selector: Selector?) -> Choice? {
+        let pages = targets.filter { !$0.webSocketDebuggerUrl.isEmpty }
+        guard !pages.isEmpty else { return nil }
+        switch selector {
+        case .none:
+            return Choice(target: pages[0], index: 1, matchCount: pages.count)
+        case let .index(n):
+            guard n >= 1, n <= pages.count else { return nil }
+            return Choice(target: pages[n - 1], index: n, matchCount: pages.count)
+        case let .match(q):
+            let needle = q.lowercased()
+            func hit(_ t: CDPTarget) -> Bool {
+                t.title.lowercased().contains(needle) || t.url.lowercased().contains(needle)
+            }
+            let count = pages.filter(hit).count
+            guard let i = pages.firstIndex(where: hit) else { return nil }
+            return Choice(target: pages[i], index: i + 1, matchCount: count)
+        }
+    }
+
+    /// A short human label for a target's report line — its title, or its url when
+    /// untitled, or a placeholder. Used in the `cdpTargetNotFound` listing.
+    public static func label(_ t: CDPTarget) -> String {
+        if !t.title.isEmpty { return t.title }
+        if !t.url.isEmpty { return t.url }
+        return "(untitled page)"
+    }
+}

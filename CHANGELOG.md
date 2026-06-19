@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.9-m4 — 2026-06-19 — `web key` + `--target`: fire app keybindings over CDP (feature A, slice A1)
+
+**Added — `web key "<chord>" <browser> [--debug-port N] [--target <n|title>]`: dispatch a
+real key/chord over CDP `Input.dispatchKeyEvent` so an app KEYBINDING/accelerator fires.**
+The fix for the Electron gap the Cursor walkthrough exposed — driving a keybinding-only
+command (e.g. Cursor's ⇧⌘L agent panel) was impossible: AX can't reach it and a `.value`
+set is a no-op. `web key` injects the chord at the renderer the way a real keypress does,
+so a web-app/Electron command bound to a chord triggers. Modifiers `cmd/shift/alt/ctrl` +
+any base key (letter / digit / `return|tab|escape|space|delete|arrows`). **Honesty:** a
+keystroke has NO in-page observable, so `web key` is ALWAYS reported dispatched-unverified
+(like the native `key` verb / `window raise`) — never a faked "it fired"; a bad chord
+(`unknownKey`/`badKeySpec`) REFUSES *before* any browser/socket is touched.
+
+**Added — `--target <n|title>` on the CDP web verbs (read/click/fill/type/select/html/eval/key):
+pick WHICH page/renderer to drive.** Multi-window Electron lists several page targets and
+the web verbs hit the FIRST only; `--target` selects a specific one by 1-based index (among
+debuggable pages) or a title/url substring. Default (omitted) is the first debuggable page,
+unchanged — every existing call site behaves identically. A `--target` that matches nothing
+REFUSES (`cdpTargetNotFound`, lists the real pages) rather than drive an arbitrary renderer.
+
+CLI + the 37th MCP tool (`web_key`) + `target` on the CDP tools' input schema. The pure
+chord→CDP-fields parse (`CDPKeySpec`: DOM `key`/`code` + Windows VK + the CDP modifier
+bitfield Alt=1|Ctrl=2|Meta=4|Shift=8, shift-uppercasing a letter's `key`) and the pure page
+chooser (`CDPTargetPick`: index/substring, skips non-debuggable targets, refuse-on-no-match)
+are hermetically tested (768 total, +24).
+
+**Live-verified — safe + headed, George's real Brave untouched (isolated throwaway via `web
+open --headed`):** a page with a `keydown` handler recording `(meta?cmd+)(shift?shift+)key`
+received `web key "cmd+shift+l"` as exactly **`cmd+shift+L`** (the ⇧⌘L mechanism Cursor's
+agent panel needs), `cmd+l` as `cmd+l` (lowercase, no shift); `web read --target 1` read the
+page, `--target 9` and `--target nonsuch` REFUSED (exit 1, listing the real page); `frobnicate`
+and `hyper+l` REFUSED before touching the browser; `web close` removed the throwaway with zero
+leftovers. Adversarial honesty review: **PASS** (no over-claim, no wrong-target, no
+behavior change when `--target` is absent). Version 0.8.8-m4 → 0.8.9-m4.
+
 ## 0.8.8-m4 — 2026-06-19 — Vision/OCR: the universal fallback eye (drive ANY app)
 
 **Added — `ocr` + `ocr-click`: locate + act on surfaces with no AX and no DOM** (a

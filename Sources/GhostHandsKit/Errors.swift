@@ -107,6 +107,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// lens never throws this (it falls back to the AX path unchanged). This is the
     /// ONLY place the no-port refuse is raised.
     case cdpPortClosed(app: String, port: Int)
+    /// A `--target <n|title>` selector matched NO debuggable page/renderer on the
+    /// port (an out-of-range index, or a title/url substring that hit nothing). We
+    /// REFUSE rather than drive an arbitrary page — the available pages are listed
+    /// so the caller can pick a real one by index or a real substring.
+    case cdpTargetNotFound(query: String, app: String, available: [String])
     /// A generic CDP transport / decode / deadline / non-loopback failure: a
     /// malformed `/json/list` body, a never-arriving reply that hit its deadline,
     /// a CDP error reply, or a refused non-loopback `webSocketDebuggerUrl`.
@@ -293,6 +298,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "normalizing) — refusing to navigate to a malformed address"
         case let .openFailed(reason):
             return "could not launch the browser via open: \(reason)"
+        case let .cdpTargetNotFound(query, app, available):
+            let list = available.isEmpty ? "(none)"
+                : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
+            return "no debuggable page matching \(query.debugDescription) in \(app) — "
+                + "refusing to drive an arbitrary renderer; pages here: \(list)"
         case let .cdpPortClosed(app, port):
             return "no DevTools port on 127.0.0.1:\(port) for \(app) — relaunch "
                 + "with --remote-debugging-port=\(port), or use `web read` (AX); "

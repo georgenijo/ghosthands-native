@@ -81,6 +81,13 @@ public enum MCPTools {
         description: "CONSENT GATE: when the debug port is closed, launch a NEW "
             + "isolated throwaway browser for automation (never your real "
             + "profile); default false")
+    /// Pick WHICH CDP page/renderer to drive (multi-window Electron): an integer
+    /// index (1-based among debuggable pages) or a title/url substring. Omitted ⇒
+    /// the first debuggable page (unchanged). A no-match REFUSES.
+    static let targetProp = Property(
+        name: "target", type: "string",
+        description: "OPTIONAL: pick which page/renderer to drive — a 1-based index "
+            + "or a title/url substring (default: first debuggable page)")
 
     /// The shared locator disambiguators (`--role`/`--text`/`--nth`) for the
     /// named-control verbs. All optional; absent ⇒ refuse-on-ambiguous intact.
@@ -423,7 +430,7 @@ public enum MCPTools {
              description: "Read the page's meaningful controls/text via the CDP or AX lens "
                  + "(pure read). Names the served lens honestly.",
              properties: [
-                 browserProp, cdpProp, axLensProp, debugPortProp, relaunchProp,
+                 browserProp, cdpProp, axLensProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["browser"]),
 
@@ -441,7 +448,7 @@ public enum MCPTools {
              properties: [
                  Property(name: "selector", type: "string",
                           description: "a CSS selector for the target element"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["selector", "browser"]),
 
@@ -452,7 +459,7 @@ public enum MCPTools {
                  Property(name: "selector", type: "string",
                           description: "a CSS selector for the input"),
                  Property(name: "text", type: "string", description: "the text to fill"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["selector", "text", "browser"]),
 
@@ -468,9 +475,22 @@ public enum MCPTools {
                  Property(name: "text", type: "string", description: "the text to type"),
                  Property(name: "submit", type: "boolean",
                           description: "press Enter after typing (default false)"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["selector", "text", "browser"]),
+
+        Tool(name: "web_key",
+             description: "Fire a real key/chord over CDP Input.dispatchKeyEvent (CDP only) so "
+                 + "an app KEYBINDING/accelerator triggers — e.g. Cursor's cmd+shift+l agent "
+                 + "panel — which neither AX nor a value-set can reach. ALWAYS reported "
+                 + "dispatched-unverified (a keystroke has no in-page observable); a bad chord "
+                 + "or no-match target REFUSES. Modifiers cmd/shift/alt/ctrl + a base key.",
+             properties: [
+                 Property(name: "chord", type: "string",
+                          description: "the chord, e.g. \"cmd+shift+l\", \"return\", \"ctrl+a\""),
+                 browserProp, debugPortProp, relaunchProp, targetProp,
+             ],
+             required: ["chord", "browser"]),
 
         Tool(name: "web_select",
              description: "Choose a <select> dropdown option by its value OR visible text "
@@ -482,7 +502,7 @@ public enum MCPTools {
                           description: "an @eN ref or CSS selector for the <select>"),
                  Property(name: "value", type: "string",
                           description: "the option's value or visible text to choose"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["selector", "value", "browser"]),
 
@@ -492,7 +512,7 @@ public enum MCPTools {
              properties: [
                  Property(name: "selector", type: "string",
                           description: "a CSS selector for the element"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["selector", "browser"]),
 
@@ -502,7 +522,7 @@ public enum MCPTools {
              properties: [
                  Property(name: "js", type: "string",
                           description: "the JavaScript expression to evaluate"),
-                 browserProp, debugPortProp, relaunchProp,
+                 browserProp, debugPortProp, relaunchProp, targetProp,
              ],
              required: ["js", "browser"]),
     ]
