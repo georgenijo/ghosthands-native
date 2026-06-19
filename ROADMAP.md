@@ -210,16 +210,30 @@ occlusion-refused, stale-refused, dispatched-unverified — never a fake success
   post-click DOM state read-back (nav still wins; an unstable read never fabricates).
 - **A3-gap ✅ (0.8.14)** — `act "@ref"` pins CDP reattach to the exact renderer `see` read
   (`SeeSnapshot.cdpTargetId` + `CDPTargetPick.id`), so non-default-page refs are actionable.
-- **PR review (0.8.15-pending)** — CodeRabbit honesty/correctness fixes: bare `--type`
-  refuses, cdp-ref-without-port refuses, ambiguous `--target` substring refuses, `see`
-  settle no longer blocks the MainActor.
-- **#1 closed** (Vision/OCR shipped + folded into `see`). 816 hermetic tests.
+- **PR review (0.8.15)** — CodeRabbit honesty/correctness fixes: bare `--type` refuses,
+  cdp-ref-without-port refuses, ambiguous `--target` substring refuses, `see` settle no
+  longer blocks the MainActor.
+- **shadow/iframe pierce ✅ (0.8.15)** — `see`/`web read`/`web click`/`fill` descend into
+  OPEN shadow roots + SAME-ORIGIN iframes, so a control in a web component (Cursor's
+  shadow-root composer) is surfaced AND its `@eN` reattaches. Iframe targets are surfaced
+  for reading but `web click` REFUSES them (uncorrected cross-frame click geometry —
+  honesty fix from the review). Closes the Cursor-composer capstone gap (shadow half). 827 tests.
+- **#1 closed** (Vision/OCR shipped + folded into `see`).
 
 **Open backlog:** #3 (UI-test flow-runner + JSON/JUnit report — next pickup), #4
 (packaging/notarization — blocked on an Apple Developer signing identity), #2 (always-on
-daemon + AXObserver — deferred, needs a design pass). Useful new ideas surfaced by the
-Cursor capstone: shadow-DOM / iframe piercing for `see`'s CDP eye (Cursor's composer lives
-in a shadow root); a launch-witnessed VERIFIED for Dock/app-open; OCR window-id robustness.
+daemon + AXObserver — deferred, needs a design pass).
+- **Dock launch-witness — evaluated, DEFERRED.** A worktree agent built an honest,
+  hermetically-tested launch-witness (poll `apps()` after a Dock press → promote to VERIFIED
+  on a fresh launch/activation). Live-verify rejected it: AXPress on a Dock tile doesn't
+  observably *foreground* an already-running app (so activation is never witnessed), and
+  `NSWorkspace.runningApplications` registers a cold launch too slowly to catch within a
+  sane deadline (System Settings missed even at 6s) — while the poll adds latency to every
+  Dock click. Revive only with an EVENT-based signal (`NSWorkspace` launch/activate
+  notifications — instant, no poll) instead of polling. Honest as-built; just not worth it.
+- Other ideas: cross-frame click-coordinate translation (so iframe targets become clickable,
+  not just readable); OCR window-id robustness (`could not resolve a CGWindowID` blocks
+  `see`'s OCR eye on background/desktop windows); `see --in <css>` honoring `--target`.
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
