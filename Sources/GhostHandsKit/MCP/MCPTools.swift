@@ -165,6 +165,19 @@ public enum MCPTools {
              ],
              required: ["action", "name", "app"]),
 
+        Tool(name: "menu",
+             description: "Drive an app's menu bar by a ' > '-separated path "
+                 + "(e.g. \"File > Open Recent > ~/proj\"). AXPress through each "
+                 + "level, no cursor/focus steal. Always dispatched-unverified (a menu "
+                 + "action has no in-AX observable); refuses on an unmatched/ambiguous "
+                 + "segment or a path past a leaf.",
+             properties: [
+                 Property(name: "path", type: "string",
+                          description: "menu path, ' > '-separated (File > New File)"),
+                 appProp,
+             ],
+             required: ["path", "app"]),
+
         Tool(name: "snapshot",
              description: "Dump the app's AX tree (pure read). `format` selects the "
                  + "indented text tree (ax) or a JSON array (json).",

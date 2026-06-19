@@ -110,6 +110,9 @@ struct GhostHandsMCP {
                 let o = try GhostHands.act(action: arg("action"), name: arg("name"),
                                            appSpec: arg("app"))
                 return MCPMapping.map(o)
+            case "menu":
+                let o = try GhostHands.menu(path: arg("path"), appSpec: arg("app"))
+                return MCPMapping.fromEnvelope(.fromMenu(o))
             case "snapshot":
                 let o = try GhostHands.snapshot(appSpec: arg("app"))
                 let asJSON = (MCPProtocol.string("format", from: arguments) ?? "ax") == "json"

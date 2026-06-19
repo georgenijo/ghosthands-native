@@ -61,6 +61,19 @@ extension JSONResult {
             fields: fields)
     }
 
+    public static func fromMenu(_ o: MenuOutcome) -> JSONResult {
+        let fields: [(String, GHJSONValue)] = [
+            ("path", .array(o.path.map { .string($0) })),
+        ]
+        return JSONResult(
+            verb: "menu",
+            // A menu action has no in-AX observable → always dispatched, never verified.
+            status: o.verified ? .verified : .dispatched,
+            app: o.app, target: o.path.joined(separator: " > "),
+            evidence: o.evidence,
+            fields: fields)
+    }
+
     public static func fromFocus(_ o: FocusOutcome) -> JSONResult {
         var fields: [(String, GHJSONValue)] = [("role", .string(o.role))]
         fields += GHJSONValue.optBool("focusedAfter", o.focusedAfter)

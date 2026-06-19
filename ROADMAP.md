@@ -68,7 +68,8 @@ hermetic with fabricated facts). Don't press destructive controls in real apps
 | Toggle checkbox / move slider / pick dropdown (set-value) | ~ | ✅ | ✅ | ✅ | done (M3) |
 | Named AX actions (open/confirm/pick/show_menu/cancel/raise) | ✅ | ✅ | ✅ | ✅ | done (M3) |
 | record / replay a flow (no model) | ✅ | ❌ | ✅ | ✅ | done (M3 pass-2) |
-| Menu bar + Control Center | ❌ | ✅ | ❌ | ✅ | DEFERRED (hard: MenuBarExtra AXPress no-op) |
+| Menu bar (regular app menus — File/Edit/View…) | ❌ | ✅ | ✅ | ✅ | done (`menu` verb, 0.8.2) |
+| Control Center / MenuBarExtra (status items) | ❌ | ✅ | ❌ | ✅ | DEFERRED (hard: MenuBarExtra AXPress no-op) |
 | Install app (DMG → Applications, cp -R + verify bundle) | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Multi-monitor + window identity/management | ❌ | ✅ | ✅ | ✅ | done (M4) |
 | Web tier (read page, with element frames) | ✅(cua) | ✅ | ✅(Chromium+Safari) | ✅ | done (M4, AX-wake) |

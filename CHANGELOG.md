@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.8.2-m4 — 2026-06-19 — menu bar (a DEFERRED row goes green)
+
+**Added — `menu "<A > B > C>" <app>`: drive an app's regular menu bar.** Resolves a
+` > `-separated path through the Accessibility tree — `AXMenuBar` → `AXMenuBarItem`
+→ AXPress to open → descend each `AXMenu` → AXPress the leaf — with **no cursor, no
+focus steal**. CLI + 33rd MCP tool (`menu`) + `--json` envelope.
+
+This flips a capability-matrix row that was marked **DEFERRED**. The deferral was
+about **MenuBarExtra / Control Center** (status-bar items whose AXPress is a no-op);
+a **regular app menu** (File/Edit/View/…) is fully AX-drivable, which a live probe on
+Cursor confirmed. The matrix now splits the row: regular menus ✅ (this verb),
+Control Center/MenuBarExtra still DEFERRED.
+
+**Honesty:** a menu action's effect (open a folder, run a command) is downstream and
+app-specific — there is no in-AX observable on the menu itself — so `menu` is always
+**dispatched-unverified** (AXPress accepted at each step), NEVER a fabricated success
+(mirrors `key` / `act raise`). What it DOES enforce: each segment must resolve to
+**exactly one** item (exact-beats-substring; the ellipsis menus append is matched
+naturally), and a segment matching **none or >1** item REFUSES — listing the real
+items at that level — closing any menu it opened so a refuse never leaves the app's
+menu hanging. A non-final segment with no submenu also REFUSES (path walked past a
+leaf). Pure parsing + matching are hermetically tested (724 total, +13).
+
+**Live-verified** end-to-end on Cursor, ghosthands-only: `menu "File > Open Recent >
+~/Documents/code/murmur-app" Cursor` opened the project (read back via `windows` as
+`"… — murmur-app"`), and `menu "File > Frobnicate" Cursor` refused (exit 1) listing
+all 20 real File-menu items.
+
 ## 0.8.1-m4 — 2026-06-19 — web-parity level-up
 
 A fresh agent-browser-vs-ghosthands head-to-head (full 11-task battery, both driven

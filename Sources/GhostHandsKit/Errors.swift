@@ -143,6 +143,16 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// dropdown selection has no meaning on a text input or a div. We REFUSE rather
     /// than guess (e.g. silently fall back to a fill), naming the actual role.
     case notASelect(selector: String, role: String)
+    /// `menu` could not read the app's menu bar (`AXMenuBar` absent). A faceless /
+    /// agent process with no menu bar, or an app that doesn't expose one — we
+    /// REFUSE rather than pretend a menu path exists.
+    case menuBarUnavailable(app: String)
+    /// `menu` found no item matching a path segment at its level. We REFUSE and list
+    /// the real items at that level so the caller can pick one — never guesses.
+    case menuItemNotFound(segment: String, app: String, available: [String])
+    /// `menu` was given more path segments after an item that has no submenu — the
+    /// path walked past a leaf. We REFUSE rather than press a leaf as if it opened.
+    case notASubmenu(segment: String, app: String)
     /// `web select` found the `<select>`, but NO option's value or visible text
     /// matched the request. We REFUSE rather than leave the prior selection and
     /// claim a no-op succeeded — the available options are listed so the caller can
@@ -307,6 +317,16 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "\(selector.debugDescription) is a <\(role)>, not a <select> — "
                 + "`web select` only drives dropdowns; use `web fill`/`web click` for "
                 + "other controls"
+        case let .menuBarUnavailable(app):
+            return "\(app) exposes no menu bar (AXMenuBar absent) — nothing to drive"
+        case let .menuItemNotFound(segment, app, available):
+            let list = available.isEmpty ? "(none)" : available.map { $0.debugDescription }.joined(separator: ", ")
+            let seg = segment.isEmpty ? "(empty path)" : segment.debugDescription
+            return "no menu item matching \(seg) in \(app) at this level — "
+                + "refusing to guess; items here: \(list)"
+        case let .notASubmenu(segment, app):
+            return "menu item \(segment.debugDescription) in \(app) has no submenu — "
+                + "the menu path continues past a leaf item"
         case let .optionNotFound(value, selector, options):
             let list = options.isEmpty ? "(none)" : options.map { $0.debugDescription }.joined(separator: ", ")
             return "no option matching \(value.debugDescription) in "

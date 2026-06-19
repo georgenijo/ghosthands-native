@@ -34,6 +34,8 @@ struct GhostHandsCLI {
             runRightClick(Array(args.dropFirst()))
         case "act":
             runAct(Array(args.dropFirst()))
+        case "menu":
+            runMenu(Array(args.dropFirst()))
         case "focus":
             runFocus(Array(args.dropFirst()))
         case "navigate":
@@ -329,6 +331,34 @@ struct GhostHandsCLI {
         }
         return "\(o.verbLabel) \(o.name.debugDescription) \(where_) — "
             + "\(o.action) accepted; no observable change (effect unverified)"
+    }
+
+    // MARK: - menu (drive the app menu bar: File > Open Recent > …)
+
+    @MainActor
+    static func runMenu(_ rest: [String]) {
+        let pos = scanJSON(rest)
+        // menu "<A > B > C>" <app>
+        guard pos.count >= 2 else { usage() }
+        let path = pos[0]
+        let appSpec = pos[1]
+        do {
+            let outcome = try GhostHands.menu(path: path, appSpec: appSpec)
+            if jsonMode { JSONResult.fromMenu(outcome).emit() }
+            else { print(reportMenu(outcome)) }
+        } catch let error as GhostHandsError {
+            fail("menu", error)
+        } catch {
+            failUnexpected("menu")
+        }
+    }
+
+    /// Honest one-liner for the menu verb. A menu action has no in-AX observable, so
+    /// the result is always DISPATCHED-UNVERIFIED (AXPress accepted at each step;
+    /// exit 0) — never a fabricated success; a refuse exits non-zero upstream.
+    static func reportMenu(_ o: MenuOutcome) -> String {
+        let trail = o.path.joined(separator: " > ")
+        return "menu \(trail.debugDescription) in \(o.app) — \(o.evidence)"
     }
 
     // MARK: - focus
@@ -2098,6 +2128,7 @@ struct GhostHandsCLI {
           ghosthands doubleclick "<name>" <app>       open a row/file (AXOpen), verified by effect
           ghosthands right-click "<name>" <app> [--visible]   open an element's context menu (AXShowMenu, else pixel right-click), verified by menu-appeared
           ghosthands act <action> "<name>" <app>      invoke a named AX action (see actions below)
+          ghosthands menu "<A > B > C>" <app>          drive the app menu bar (e.g. "File > Open Recent > ~/proj"); AXPress per level, dispatched-unverified
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
