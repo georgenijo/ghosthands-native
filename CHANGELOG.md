@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.6-m4 — 2026-06-19 — "fake mouse" glide (visible cursor travel)
+
+**Added — `GHOSTHANDS_GLIDE=1`: ease the real cursor to the target before a visible
+click.** In `.visible` HID mode (`click-at`/`drag --visible`), instead of warping the
+cursor straight to the point, glide it there over a smoothstep-eased path (~30
+samples × ~9ms ≈ 270ms) computed from the gap between the current cursor position and
+the target — the "calculate the distance and move there" idea, watchable. Off by
+default (the visible path stays fast) and scoped to the visible HID tier only — it
+never touches the invisible AX path. `PixelPath.glide` (the eased geometry: lands
+exactly on target, smoothstep-symmetric, monotonic) is pure + hermetically tested
+(735 total, +4). Step 1 of 3 toward "drive any app" (glide → Electron-CDP →
+Vision/OCR). Version 0.8.5-m4 → 0.8.6-m4.
+
 ## 0.8.5-m4 — 2026-06-19 — highlight on EVERY act verb
 
 **Extended `GHOSTHANDS_HIGHLIGHT=1` from `click` to every native act verb.** Now the

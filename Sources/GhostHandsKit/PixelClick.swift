@@ -120,6 +120,22 @@ extension GhostHands {
     /// tick or unrelated repaint cannot become false evidence.
     static let pixelDiffRadius = 24
 
+    /// "Fake mouse" glide tuning (visible mode, GHOSTHANDS_GLIDE=1): ~30 samples ×
+    /// ~9ms ≈ a 270ms eased travel to the target before the click.
+    static let glideSteps = 30
+    static let glideStepMicros: UInt32 = 9000
+
+    /// Opt-in via env: when set, a VISIBLE pixel click/drag eases the real cursor to
+    /// the point first (watchable travel) instead of warping straight there. Off by
+    /// default so the visible path stays fast; only affects `.visible` mode.
+    static var glideEnabled: Bool {
+        guard let v = ProcessInfo.processInfo.environment["GHOSTHANDS_GLIDE"] else {
+            return false
+        }
+        let s = v.lowercased()
+        return s == "1" || s == "true" || s == "yes"
+    }
+
     /// `click-at <x> <y> <app>` — left click at a GLOBAL screen point, targeting
     /// `app`'s frontmost window. See the type doc for the honesty/invisibility
     /// contract. Returns an outcome that is honest about VERIFIED vs DISPATCHED.
@@ -302,6 +318,18 @@ extension GhostHands {
         // Remember where the real pointer is so we can put it back.
         let savedPos = CGEvent(source: nil)?.location ?? start
         let src = CGEventSource(stateID: .hidSystemState)
+
+        // OPT-IN "fake mouse" GLIDE (GHOSTHANDS_GLIDE=1): ease the real cursor from
+        // where it is to the press point, so the travel is watchable (vs an instant
+        // warp). Distance/path are computed from the two known points — exactly the
+        // "calculate the gap and move there" idea. Off by default = a direct warp.
+        if glideEnabled, savedPos != start {
+            for p in PixelPath.glide(from: savedPos, to: start, steps: glideSteps) {
+                CGWarpMouseCursorPosition(p)
+                usleep(glideStepMicros)
+            }
+            CGAssociateMouseAndMouseCursorPosition(1)
+        }
 
         // Warp to the press point, then post the down through the HID tap. After a
         // warp the HID cursor is briefly decoupled from physical movement; a tiny

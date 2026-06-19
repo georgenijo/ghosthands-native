@@ -2211,11 +2211,16 @@ struct GhostHandsCLI {
             It NEVER changes a verb's output or exit code — a capture/log failure is swallowed
             (screenshot logged as null). Needs Screen Recording for the PNG; the log is written
             regardless. Unset/empty ⇒ no capture, no log, identical behavior.
-          GHOSTHANDS_HIGHLIGHT=1   OFF by default. When set, `click` flashes a red highlight box
-            at the target control's on-screen frame just before pressing — so you can SEE where
+          GHOSTHANDS_HIGHLIGHT=1   OFF by default. When set, every act verb flashes a red box at
+            the target control's on-screen frame just before acting — so you can SEE where
             ghosthands acts. A transparent, click-through overlay: it does NOT move the cursor or
             steal focus (the invisibility contract holds). Observability only — it shows where the
             AX target is, never a fake pointer; a refuse flashes nothing.
+          GHOSTHANDS_GLIDE=1   OFF by default. When set, a VISIBLE pixel click/drag (--visible)
+            eases the real cursor from where it is to the target (a watchable "mouse moving there"
+            travel) before clicking, instead of warping straight to the point. Only affects the
+            visible HID path (which already moves the cursor, the labelled exception) — never the
+            invisible AX path.
 
         <app> = bundle id, pid, or (partial) app name. Examples:
           ghosthands click "New Folder" Finder
