@@ -70,8 +70,13 @@ public enum WebFind {
     function labelOf(el) {
       let t = el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
       if (!t && el.id) {
-        try { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
-              if (l) t = l.innerText; } catch (e) {}
+        try {
+          // Resolve `label[for]` in the element's OWN root (document or shadow root)
+          // so a field inside a web component still finds its label.
+          const scope = (el.getRootNode && el.getRootNode()) || document;
+          const l = scope.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+          if (l) t = l.innerText;
+        } catch (e) {}
       }
       if (!t && el.closest) { const p = el.closest('label'); if (p) t = p.innerText; }
       if (!t) t = el.getAttribute('title') || el.getAttribute('name') || '';
@@ -93,28 +98,41 @@ public enum WebFind {
         let labelFn = fillable ? fillLabelJS : clickLabelJS
         return """
         (() => {
+          \(CDPDigest.shadowPierceJS)
           const want = \(needle).toLowerCase();
           const nth = \(nthLit);
           \(labelFn)
           const cands = [];
-          for (const el of document.querySelectorAll("\(candidates)")) {
-            const label = labelOf(el);
-            if (!label) continue;
-            const ll = label.toLowerCase();
-            const score = (ll === want) ? 3 : ll.startsWith(want) ? 2 : ll.includes(want) ? 1 : 0;
-            if (!score) continue;
-            const r = el.getBoundingClientRect();
-            if (r.width <= 0 || r.height <= 0) continue;   // not visibly laid out
-            const inVp = (r.top >= 0 && r.left >= 0
-                          && r.bottom <= innerHeight && r.right <= innerWidth) ? 1 : 0;
-            cands.push({ el, label, score, inVp, y: r.top, x: r.left });
-          }
+          // Gather candidates across the document AND every open shadow root /
+          // same-origin iframe, so a control inside a web component (e.g. Cursor's
+          // composer) is addressable by its visible text, not just top-level DOM.
+          ghForEachRoot((root) => {
+            let els;
+            try { els = root.querySelectorAll("\(candidates)"); } catch (e) { els = []; }
+            for (const el of els) {
+              const label = labelOf(el);
+              if (!label) continue;
+              const ll = label.toLowerCase();
+              const score = (ll === want) ? 3 : ll.startsWith(want) ? 2 : ll.includes(want) ? 1 : 0;
+              if (!score) continue;
+              const r = el.getBoundingClientRect();
+              if (r.width <= 0 || r.height <= 0) continue;   // not visibly laid out
+              const inVp = (r.top >= 0 && r.left >= 0
+                            && r.bottom <= innerHeight && r.right <= innerWidth) ? 1 : 0;
+              cands.push({ el, label, score, inVp, y: r.top, x: r.left });
+            }
+          });
           // Rank: exact > prefix > contains; in-viewport; top-most (y then x).
           cands.sort((a, b) => b.score - a.score || (b.inVp - a.inVp) || a.y - b.y || a.x - b.x);
           if (!cands.length) return { found: false, count: 0 };
           if (nth >= 0 && nth >= cands.length) return { found: false, outOfRange: true, count: cands.length };
           const pick = cands[nth >= 0 ? nth : 0];
-          for (const e of document.querySelectorAll('[data-gh-find]')) e.removeAttribute('data-gh-find');
+          // Clear prior `data-gh-find` stamps across ALL roots, then stamp the pick.
+          ghForEachRoot((root) => {
+            let stamped;
+            try { stamped = root.querySelectorAll('[data-gh-find]'); } catch (e) { stamped = []; }
+            for (const e of stamped) e.removeAttribute('data-gh-find');
+          });
           pick.el.setAttribute('data-gh-find', '1');
           return { found: true, count: cands.length, label: pick.label };
         })()

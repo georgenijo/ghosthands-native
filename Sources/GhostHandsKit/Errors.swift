@@ -106,7 +106,28 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// loopback. We REFUSE rather than silently enable a debug surface; the `auto`
     /// lens never throws this (it falls back to the AX path unchanged). This is the
     /// ONLY place the no-port refuse is raised.
+    /// `act "@ref"` was called but no `see` snapshot exists yet — there is no ref
+    /// map to resolve against. REFUSE: run `see <app>` first (the look→act contract).
+    case seeRequired(app: String)
+    /// `act "@ref"` resolved a snapshot, but it is STALE for the requested action:
+    /// the snapshot is for a different app, the app was relaunched since the see
+    /// (PID changed), or the ref isn't in the snapshot. REFUSE "re-see" rather than
+    /// act on a guessed/stale identity.
+    case refStale(ref: String, reason: String)
+    /// `act "@ref" --type` targeted an OCR-only row — Vision located text on screen
+    /// but there is no field handle to type into (no AX value, no DOM node). REFUSE
+    /// rather than blind-type; re-`see` with a port/AX so the field is addressable.
+    case refNotTypeable(ref: String)
     case cdpPortClosed(app: String, port: Int)
+    /// A `--target <n|title>` selector matched NO debuggable page/renderer on the
+    /// port (an out-of-range index, or a title/url substring that hit nothing). We
+    /// REFUSE rather than drive an arbitrary page — the available pages are listed
+    /// so the caller can pick a real one by index or a real substring.
+    case cdpTargetNotFound(query: String, app: String, available: [String])
+    /// A `--target <substring>` matched MORE THAN ONE debuggable page — we REFUSE
+    /// rather than drive the first of several (the refuse-on-ambiguity rule). The
+    /// caller should pin exactly with `--target #<id>` or a 1-based `--target <N>`.
+    case cdpTargetAmbiguous(query: String, app: String, available: [String])
     /// A generic CDP transport / decode / deadline / non-loopback failure: a
     /// malformed `/json/list` body, a never-arriving reply that hit its deadline,
     /// a CDP error reply, or a refused non-loopback `webSocketDebuggerUrl`.
@@ -129,6 +150,13 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// REFUSE rather than dispatch a click that would land on the covering element
     /// (the agent-browser-mined refuse: never click through an overlay).
     case elementCovered(selector: String, coveredBy: String)
+    /// A `web click` target lives inside a SAME-ORIGIN IFRAME. `see`/`web read`
+    /// surface iframe elements, but the click dispatch + occlusion guard run in
+    /// top-level viewport coords while an iframe's box is iframe-relative — clicking
+    /// an offset iframe target would land on the wrong point (and could fabricate a
+    /// navigation-verified). We REFUSE rather than dispatch at a translated guess
+    /// (cross-frame click-coordinate translation is a future enhancement).
+    case iframeClickUnsupported(selector: String)
     /// A `web click` / `web fill` was forced onto the `--ax` lens, but a CSS
     /// selector has no AX equivalent — these selector verbs REQUIRE CDP. A
     /// usage-class refuse, surfaced before any work.
@@ -293,6 +321,26 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "normalizing) — refusing to navigate to a malformed address"
         case let .openFailed(reason):
             return "could not launch the browser via open: \(reason)"
+        case let .seeRequired(app):
+            return "no see snapshot for \(app) — run `see \(app)` first, then "
+                + "`act \"@ref\"` on a ref it printed"
+        case let .refStale(ref, reason):
+            return "\(ref) is stale (\(reason)) — re-run `see` and use a fresh ref"
+        case let .refNotTypeable(ref):
+            return "\(ref) is an OCR-only target (located by Vision, no field handle) "
+                + "— can't type into it; re-`see` with a debug port / AX so the field "
+                + "is addressable"
+        case let .cdpTargetNotFound(query, app, available):
+            let list = available.isEmpty ? "(none)"
+                : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
+            return "no debuggable page matching \(query.debugDescription) in \(app) — "
+                + "refusing to drive an arbitrary renderer; pages here: \(list)"
+        case let .cdpTargetAmbiguous(query, app, available):
+            let list = available.isEmpty ? "(none)"
+                : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
+            return "\(query.debugDescription) matches more than one page in \(app) — "
+                + "refusing to drive the first of several; pin one with --target #<id> "
+                + "or a 1-based index. pages: \(list)"
         case let .cdpPortClosed(app, port):
             return "no DevTools port on 127.0.0.1:\(port) for \(app) — relaunch "
                 + "with --remote-debugging-port=\(port), or use `web read` (AX); "
@@ -307,6 +355,11 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
         case let .selectorNotFound(selector, app):
             return "no element matching selector \(selector.debugDescription) in "
                 + "\(app)'s page — refusing to actuate a target that is not in the DOM"
+        case let .iframeClickUnsupported(selector):
+            return "\(selector.debugDescription) is inside a same-origin iframe — "
+                + "refusing to click via uncorrected cross-frame geometry (the dispatch "
+                + "uses top-level coords); read it with `web read`/`see`, or target it "
+                + "in the top document"
         case let .elementCovered(selector, coveredBy):
             return "\(selector.debugDescription) is covered by a <\(coveredBy)> at its "
                 + "center point — refusing to click through an overlay (the click "

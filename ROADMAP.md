@@ -172,6 +172,79 @@ agent-browser's driving feel, ghosthands' honesty + native reach kept. See
 [`docs/WEB-PARITY.md`](./docs/WEB-PARITY.md) verdict. Optional polish left: #6
 (post-click DOM read-back) + #5 (native `--nth`/`--role`/`--text`).
 
+**Feature A — "drive any app" turnkey (in progress).** Closing the two Electron
+gaps the Cursor walkthrough exposed: a keybinding-only command can't be fired, and
+multi-window Electron forces guessing which renderer. Three looped slices:
+- **A1 ✅ shipped (0.8.9-m4)** — `web key "<chord>" <browser>` fires an app
+  keybinding/accelerator over CDP `Input.dispatchKeyEvent` (the ⇧⌘L-class command AX
+  can't reach), always dispatched-unverified; **`--target <n|title>`** picks WHICH
+  CDP page/renderer the web verbs drive (default first, no-match REFUSES). Pure
+  `CDPKeySpec`/`CDPTargetPick` hermetically tested; live-verified on an isolated
+  throwaway Brave (a `keydown` handler received `cmd+shift+L` exactly; `--target`
+  index/substring refuse paths proven). 37th MCP tool. Honesty review PASS.
+- **A2 ✅ shipped (0.8.10-m4)** — `see <app>` fuses AX + CDP DOM + Vision OCR into ONE
+  ranked, de-duplicated, `@ref`-stamped list (ref, role, name, rect, source, tier) and
+  persists the ref→record map for `act`. Visible+interactive+named ranked first; dedup
+  keeps the most-actuatable source (cdp>ax>ocr) and won't drop a distinct same-named
+  control (per-source name-uniqueness gate); CDP eye never pulls an unrelated browser
+  into a native view. Pure fusion hermetically tested (789 total). 38th MCP tool. Live-
+  verified (AX on Finder, CDP on a throwaway Brave). Honesty review PASS.
+- **A3 ✅ shipped (0.8.11-m4)** — `act "@ref" <app> [--type] [--submit]` resolves a ref
+  from the last `see` and AUTO-PICKS the hand by source (AX press/type, CDP click/type,
+  HID click), delegating to the proven per-tier verb (verify-or-refuse). Staleness gates
+  refuse on no-snapshot / app-mismatch / relaunch (PID) / unknown-ref; ocr+type refuses.
+  Pure plan hermetically tested (799 total). 39th MCP tool (`act_ref`). Live-verified:
+  the CDP capstone (`see` → `act @ref` VERIFIED by navigation, then stale-refuse) and a
+  real isolated Cursor (`web key cmd+shift+l` opened the Agents panel, `see` surfaced the
+  renderer, `act` honestly refused on occlusion). Honesty review PASS.
+
+**Feature A: COMPLETE (A1 + A2 + A3 shipped).** A brain now drives any Mac app in two
+calls — `see <app>` (one fused eye: AX + CDP + OCR, ranked + `@ref`-stamped) then
+`act "@ref"` (auto-picked hand, verify-or-refuse) — plus `web key` to fire keybindings
+no other eye/hand can reach. The honesty contract held throughout (navigation-verified,
+occlusion-refused, stale-refused, dispatched-unverified — never a fake success).
+
+**Post-A follow-ups shipped (all on `feat/drive-any-app`, PR #13):**
+- **#5 ✅ (0.8.12)** — `type`/`set-value` honor `--role`/`--text`/`--nth` on the MCP surface.
+- **#6 ✅ (0.8.13)** — `web click` earns VERIFIED on in-page (non-navigating) toggles via a
+  post-click DOM state read-back (nav still wins; an unstable read never fabricates).
+- **A3-gap ✅ (0.8.14)** — `act "@ref"` pins CDP reattach to the exact renderer `see` read
+  (`SeeSnapshot.cdpTargetId` + `CDPTargetPick.id`), so non-default-page refs are actionable.
+- **PR review (0.8.15)** — CodeRabbit honesty/correctness fixes: bare `--type` refuses,
+  cdp-ref-without-port refuses, ambiguous `--target` substring refuses, `see` settle no
+  longer blocks the MainActor.
+- **shadow/iframe pierce ✅ (0.8.15)** — `see`/`web read`/`web click`/`fill` descend into
+  OPEN shadow roots + SAME-ORIGIN iframes, so a control in a web component (Cursor's
+  shadow-root composer) is surfaced AND its `@eN` reattaches. Iframe targets are surfaced
+  for reading but `web click` REFUSES them (uncorrected cross-frame click geometry —
+  honesty fix from the review). Closes the Cursor-composer capstone gap (shadow half). 827 tests.
+- **#1 closed** (Vision/OCR shipped + folded into `see`).
+
+- **#3 ✅ (0.8.16)** — `replay --report-json/--report-junit` emits a CI pass-fail report
+  (JSON + JUnit XML) over the existing honest per-step verdicts; `refused`→`<failure>`,
+  `dispatched`→pass+note, `skipped` accounted, exit mirrors the policy. 833 tests.
+
+**Open backlog:** #4 (packaging/notarization — blocked on an Apple Developer signing
+identity), #2 (always-on daemon + AXObserver — deferred, needs a design pass).
+- **Dock launch-witness — evaluated, DEFERRED.** A worktree agent built an honest,
+  hermetically-tested launch-witness (poll `apps()` after a Dock press → promote to VERIFIED
+  on a fresh launch/activation). Live-verify rejected it: AXPress on a Dock tile doesn't
+  observably *foreground* an already-running app (so activation is never witnessed), and
+  `NSWorkspace.runningApplications` registers a cold launch too slowly to catch within a
+  sane deadline (System Settings missed even at 6s) — while the poll adds latency to every
+  Dock click. Revive only with an EVENT-based signal (`NSWorkspace` launch/activate
+  notifications — instant, no poll) instead of polling. Honest as-built; just not worth it.
+- **OCR window-id robustness ✅ (0.8.17)** — `ocr`/`shot` fall back to PID-matched window
+  selection when the AX→CGWindowID bridge fails (no more `could not resolve a CGWindowID`).
+  NB: a separate Screen-Recording capture-grant issue on the rebuilt CLI binary (`Failed to
+  start stream…`, affects `shot` too) blocked a full end-to-end OCR demo — needs the binary
+  re-granted Screen Recording in System Settings to confirm the OCR eye live.
+- **Remaining unblocked, deliberately deferred:** cross-frame click-coordinate translation
+  (so iframe `@ref`s become CLICKABLE, not just readable — currently an honest refuse). Niche
+  + honesty-sensitive (the coord math is exactly the fabrication-risk the iframe refuse
+  guards); worth doing carefully with fresh attention rather than at a session tail.
+- Tiny: `see --in <css>` honoring `--target`.
+
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
 hands + eyes; whoever plugs in brings the brain.

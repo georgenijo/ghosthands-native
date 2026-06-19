@@ -329,7 +329,8 @@ final class JSONResultTests: XCTestCase {
     func testReplayRefusedStepsShapeToRefused() {
         let summary = ReplayPolicy.Summary(executed: 3, verified: 1, dispatched: 1,
                                            refused: 1, stoppedEarly: true)
-        let run = GhostHands.ReplayRun(summary: summary, total: 5)
+        let run = GhostHands.ReplayRun(summary: summary, total: 5,
+            report: FlowReport(flow: "f", total: 5, summary: summary, steps: []))
         let r = JSONResult.fromReplay(run)
         XCTAssertEqual(r.status, .refused, "a run with a refused step is not clean")
         XCTAssertNotNil(r.error)
@@ -339,7 +340,8 @@ final class JSONResultTests: XCTestCase {
     func testReplayCleanRunShapesToOk() {
         let summary = ReplayPolicy.Summary(executed: 2, verified: 2, dispatched: 0,
                                            refused: 0, stoppedEarly: false)
-        let run = GhostHands.ReplayRun(summary: summary, total: 2)
+        let run = GhostHands.ReplayRun(summary: summary, total: 2,
+            report: FlowReport(flow: "f", total: 2, summary: summary, steps: []))
         let r = JSONResult.fromReplay(run)
         XCTAssertEqual(r.status, .ok)
         XCTAssertNil(r.error)

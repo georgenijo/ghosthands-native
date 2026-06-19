@@ -1,5 +1,293 @@
 # Changelog
 
+## 0.8.18-m4 — 2026-06-19 — CodeRabbit round-2: three silent-failure refuses (honesty floor)
+
+**Fixed — three flag/data paths that silently succeeded instead of refusing.** All three
+violated verify-or-refuse by treating malformed input as a quiet default rather than a clean
+stop:
+- **`--target` with no value** (the CDP web verbs AND `see`) → was treated as absent, so the
+  command silently drove the DEFAULT renderer after the user explicitly tried to scope one.
+  Now REFUSES (exit 2, "expects a 1-based index or title/url substring") — the
+  refuse-on-ambiguity rule applied to the flag itself.
+- **`replay --report-json`/`--report-junit` with no path** → ran the replay and silently
+  skipped the requested CI artifact, so a caller got a passing run with the expected report
+  missing. Now REFUSES (exit 2, "expects a path") — malformed CI usage fails fast.
+- **JUnit report, unknown step status** → the `switch` `default: break` mapped any
+  unexpected status to a clean pass, which could convert malformed data into a green test.
+  Now an unrecognized status emits a `<failure>` ("invalid status: …"); `verified` is its own
+  explicit clean-pass case. +1 hermetic test locks it (839 total).
+
+No behavior change on any well-formed call (a `--target`/`--report-*` WITH its value, and the
+four real statuses, are byte-identical). `swift build` + 839 hermetic green. Version
+0.8.17-m4 → 0.8.18-m4.
+
+## 0.8.17-m4 — 2026-06-19 — `ocr`/`shot` resolve the capture window robustly (no more CGWindowID hard-fail)
+
+**Fixed — `ocr` + `shot` no longer hard-fail with "could not resolve a CGWindowID".** Both
+bridged the app's AX window → CGWindowID via a private shim and REFUSED when that returned
+nil — which it does for background / degenerate windows (macOS-26 exposes them), so the OCR
+eye + `shot` failed on perfectly real, visible windows (this blocked `see`'s OCR eye all of
+the overnight build). Now the AX→CG bridge is a PREFERRED exact match, but when it returns
+nil we FALL BACK to selecting the app's own window from ScreenCaptureKit's capturable set by
+PID — ranked on-screen → normal-layer (0) → largest area (the main window). Works even when
+the app exposes no usable AX window.
+
+**Honesty:** the picker only ever returns a REAL window that BELONGS to the target app (PID
+match) — never another app's window (a bridged id owned by a different pid is ignored),
+never a fabricated one; no capturable window for the app → an honest refuse. For a READ
+(screenshot / OCR), capturing the app's main on-screen window is the intent. The pure
+`CaptureWindowPick` is hermetically tested (838 total, +5).
+
+**Live-verified PARTIALLY + honest about the gap:** `ocr Finder` / `ocr Calculator` now
+advance PAST the `could not resolve a CGWindowID` refuse (the window resolves), proving the
+fix. A full end-to-end OCR-text demo could NOT be completed on this machine tonight — the
+downstream ScreenCaptureKit capture itself failed with "Failed to start stream due to
+audio/video capture failure" for EVERY window (`shot` fails identically), a
+Screen-Recording / capture-grant issue on the rebuilt CLI binary that this change does NOT
+touch (the capture step is unchanged). The window-resolution fix is correct, tested, and a
+strict improvement (worst case is still an honest refuse, just past the bridge); the OCR
+eye's full live success awaits a working capture grant. Version 0.8.16-m4 → 0.8.17-m4.
+
+## 0.8.16-m4 — 2026-06-19 — `replay` writes a JSON / JUnit pass-fail report (issue #3)
+
+**Added — `replay <flow> [--report-json <path>] [--report-junit <path>]`: a structured
+UI-test report for CI.** The flow-runner already executed each step with an honest verdict,
+stopped on the first refuse, and exited nonzero on any refuse (the pure `ReplayPolicy`);
+now it can emit a machine-readable record of what happened — a stable JSON object and a
+JUnit XML file a CI consumes. Each step row carries its index, verb, human summary, status,
+and the verb's own verdict/refuse line; the aggregate carries total/executed/verified/
+dispatched/refused/skipped + the exit code. A step after an early stop is recorded
+**skipped** so every step in the flow is accounted for.
+
+**Honesty:** the report is a faithful projection of the verdicts the verbs already produced
+— `verified` (proven), `dispatched` (acted, unproven — never a success claim), `refused`
+(the world diverged → the run fails), `skipped`. The counts + exit code come from the SAME
+pure `ReplayPolicy.Summary` the live run uses (no second copy to drift). JUnit has only
+pass/failure/skipped, so a `refused` step is a `<failure>` (failures == refused == nonzero
+exit), a `skipped` step a `<skipped>`, and a `dispatched` step PASSES (consistent with the
+exit-0 policy — it acted) but carries a `<system-out>` "dispatched-unverified" note so a
+reader is never misled into thinking it was proven. Every attribute + text node is
+XML-escaped (no injection). A report-file write error is noted to stderr but NEVER changes
+the exit code — a passing run stays passing.
+
+Pure report shaping + both serializers are hermetically tested (833 total, +6);
+live-verified: a flow with a refuse + a skipped step wrote a JSON report (honest counts,
+exit 1) and valid escaped JUnit XML (`failures="1" skipped="1"`). Closes #3. Version
+0.8.15-m4 → 0.8.16-m4.
+
+## 0.8.15-m4 — 2026-06-19 — `see`/`web` pierce open shadow DOM + same-origin iframes
+
+**Added — the CDP page digest + actuation probes now descend into OPEN shadow roots and
+SAME-ORIGIN iframes.** Before, `see`/`web read` walked `document` only, so a control inside
+a web component (a custom-element library, or an Electron editor like Cursor's agent
+composer, which lives in a shadow root) was invisible — and an `@eN` stamped there couldn't
+be re-found, so `web click @eN` falsely refused as stale. Now a shared in-page traversal
+(`ghForEachRoot`/`ghQuery`) walks the document + every open `shadowRoot` + every same-origin
+iframe `contentDocument`, cycle-bounded by a visited-set, and every probe (`web read`/`see`
+digest, `web click`/`fill`/`select`/`type` resolve, the occlusion hit-test, `web html`, the
+`--text` finder) routes through it. Cross-root `@eN` refs are monotonic + non-colliding, so a
+shadow/iframe ref reattaches instead of refusing.
+
+**Honesty:** only OPEN shadow roots (a closed root's `shadowRoot` is null → skipped) and
+SAME-ORIGIN iframes (a cross-origin `contentDocument` access throws → caught + skipped) are
+pierced — a control reachable only via closed/cross-origin content is an honest miss
+(`{found:false}` → the existing stale/not-found refuse), never fabricated. The verdict logic
+is untouched — only WHICH element a selector/ref resolves to changed.
+
+**Honesty fix from the adversarial review (the one real hole, found + closed before ship):**
+an element inside a same-origin **iframe** has an iframe-RELATIVE bounding box, but the click
+dispatch + occlusion guard run in TOP-LEVEL viewport coords — so clicking an offset iframe
+target would land on the wrong point and could even fabricate a navigation-`verified`. Shadow
+roots share the host's coordinate frame (safe); iframes don't. So `web read`/`see` still
+SURFACE iframe elements (reading is honest), but `web click`/`web click --text` now REFUSE an
+iframe-hosted target (`iframeClickUnsupported`) rather than dispatch at uncorrected geometry
+(`web fill` is unaffected — it focuses + sets value, no coordinate dispatch). Cross-frame
+click-coordinate translation is a future enhancement.
+
+Pure row-shaping + the `isInFrame` gate are hermetically tested (827 total, +11); honesty
+review caught the iframe hole (now PASS). Live-verified: a button inside an OPEN shadow root
+is surfaced by `web read` (`@e2`) and `web click @e2` pierces + verifies via an aria-pressed
+flip (no regression — light-DOM elements still listed); a same-origin iframe button is
+surfaced by read but `web click` REFUSES it. Closes the Cursor-composer capstone gap (shadow
+half). Version 0.8.14-m4 → 0.8.15-m4.
+
+## 0.8.14-m4 — 2026-06-19 — `act "@ref"` pins the CDP renderer `see` read (A3 follow-up)
+
+**Fixed — a CDP `@ref` from a non-default renderer is now actionable.** A3's adversarial
+review flagged it: `see --target N` (or any multi-window Electron app) reads a SPECIFIC CDP
+page and stamps `@eN` on its DOM, but `act "@ref"` reattached to page 0 (`pick: nil`), where
+the ref's `data-gh-ref` doesn't exist → it falsely refused as stale. Now `see` persists the
+**stable DevTools target id** of the renderer it read (`SeeSnapshot.cdpTargetId`, carried out
+of `webReadCDP` via `WebReadResult.cdpTargetId`), and `act`'s CDP arms reattach by that exact
+id (a new `CDPTargetPick.id` selector — exact match, no fuzzy drift). So a ref stamped on a
+non-default page is found on its own renderer.
+
+**Honesty:** purely renderer-PINNING — the verdict logic is untouched (no new success path),
+the no-target/single-page default is byte-identical (`pick: nil` → first page), and if the
+pinned target is gone (page closed) `choose(.id)` returns nil → an honest `cdpTargetNotFound`
+refuse ("re-see"), never the wrong page. Pure `choose(.id)` + the snapshot round-trip are
+hermetically tested (814 total, +1); live-verified end-to-end (`see` recorded the target id;
+`act "@ref"` reattached via it and verified by navigation). Closes the A3 known limitation.
+
+## 0.8.13-m4 — 2026-06-19 — `web click` earns VERIFIED on in-page toggles (issue #6)
+
+**Added — `web click` post-click DOM read-back: an in-page (non-navigating) click can now
+EARN verified.** Before, `web click` verified ONLY by navigation (a changed URL); an
+in-page toggle (a tab, an accordion, a `aria-pressed` button) was always honestly
+dispatched-unverified. Now, when the URL does NOT change, `web click` reads the target's
+toggle state back and promotes to **verified** when a signal flipped — naming the signal +
+before→after (e.g. `verified: click toggled aria-pressed "false" → "true" (in-page, no
+navigation)`). Signals, in priority order: `aria-pressed`/`-checked`/`-expanded`/`-selected`,
+an input's `.checked`, and `className` (the catch-all for active/selected style toggles).
+
+**Honesty:** navigation still WINS (a changed href verifies with identical evidence); the
+flip detector requires BOTH the before AND after read to report the SAME signal (a key that
+appeared/vanished is an unstable read, never a flip) AND the values to differ — so it can
+NEVER fabricate a verified, and a no-change/unreadable click stays honestly
+dispatched-unverified. The framing is observational ("click toggled …", auditable
+before→after), the same accepted shape as the M2 effect-witness. The pure `stateFlip` +
+4-arg `clickVerdict` + the in-page probe are hermetically tested (813 total, +11);
+adversarial honesty review **PASS**. Live-verified on an `aria-pressed` toggle button
+(verified both directions). Closes #6.
+
+## 0.8.12-m4 — 2026-06-19 — `type`/`set-value` locators on the MCP surface (issue #5)
+
+**Fixed — `click`/`type`/`set_value` now advertise + honor the `--role`/`--text`/`--nth`
+locator disambiguators on the MCP surface.** The CLI already parsed them via the shared
+`parseLocator` and threaded a `LocatorSpec` into the kit verbs (which have always accepted
+it); the gap was the MCP layer, which BUILT a locator from role/text/nth args but only
+passed it to `focus`/`right_click` — not `click`/`type`/`set_value`. Now all three pass it.
+**Honesty:** a locator only changes WHICH control resolves (the same refuse-on-ambiguous
+gate, now disambiguable) — the verdict logic is untouched, so no new success path. The
+`type` tool is the careful case: its required `text` arg is the text to TYPE, so it
+advertises `role`/`nth` only (a `--text` field-label locator would collide with the
+type-text key) — caught + avoided. CLI help for `type`/`set-value` updated to show the
+flags. 802 hermetic tests (+3). Closes #5.
+
+## 0.8.11-m4 — 2026-06-19 — `act "@ref"`: the unified actuator (feature A, slice A3 — wave complete)
+
+**Added — `act "@ref" <app> [--type "<text>"] [--submit]`: the unified hand.** The
+second half of "drive any app in two calls" — `see` looks, `act "@ref"` acts. It
+resolves a `@N` ref from the LAST `see` and **auto-picks the hand by the row's
+source**: an `ax` ref → the invisible AX press/type, a `cdp` ref → the precise CDP
+click/type (by its `@eN` handle), an `ocr`-only ref → the visible HID click. No more
+choosing the eye, the element, AND the hand by hand — `see` → `act` is the whole loop.
+
+**Honesty:** `act` invents no outcome — it DELEGATES to the existing per-tier verb
+(`click`/`type`/`web click`/`web type`/`ocr-click`), each of which verifies by its own
+witness (AX read-back/effect-witness, CDP navigation/value read-back, pixel-diff) or
+reports dispatched-unverified. The ref layer adds ONLY staleness REFUSES — no `see`
+snapshot (`seeRequired`), a snapshot for a different app, an app **relaunched** since the
+see (PID changed), or an unknown/now-gone ref (`refStale`) → REFUSE "re-see", never a
+guess. An `ocr`-only ref + `--type` REFUSES (`refNotTypeable`) rather than blind-type into
+a vision-located target with no field handle. An AX ref re-finds by name on a FRESH tree
+(refusing on not-found/ambiguity), never trusting the stored rect. The `act` verb is
+overloaded by a leading `@N` token, leaving the named-action `act open|confirm|…`
+unchanged. CLI + the 39th MCP tool (`act_ref`). Pure plan (staleness + hand selection)
+hermetically tested (799 total, +10); adversarial honesty review **PASS**.
+
+**Live-verified — the turnkey two-call flow, NO hand-built recipe:**
+- **CDP capstone:** `web open https://example.com` → `see <pid> --debug-port N` surfaced
+  the `Learn more` link as a ranked `[cdp]` row → `act "@1"` **auto-picked cdp-click and
+  reported VERIFIED: navigated example.com → iana.org**; a re-`act "@1"` REFUSED as stale
+  (the page navigated, the ref's element is gone) — verify-or-refuse end to end.
+- **Staleness gates:** unknown ref, app-mismatch (snapshot was Brave, acting on Finder),
+  and no-snapshot all REFUSED (exit 1) with honest "re-see" messages.
+- **Cursor (real Electron app, isolated throwaway instance — George's Cursor untouched):**
+  `web key "cmd+shift+l" Cursor --debug-port 9333` fired Cursor's real ⇧⌘L (the Agents
+  panel rendered), `see Cursor --debug-port 9333` surfaced 18 `[cdp]` renderer controls
+  (New Agent / Toggle Agents / Search Agents), and `act "@ref"` auto-picked cdp-click and
+  **honestly REFUSED via the occlusion guard** ("covered by a div — refusing to click
+  through an overlay") — no fake success. Driving Cursor's agent *to a reply* needs its
+  signed-in account + composer-specific UI navigation (the brain is George's, out of
+  scope per AGENTS.md); the tool's job — fire the keybinding, see the renderer, act on a
+  ref with honest verdicts — is proven on a real Electron app.
+
+**Known limitation (honest, non-blocking):** `see --target N` reads a specific renderer,
+but the chosen target isn't yet persisted, so a CDP `@ref` from a NON-default page
+reattaches to page 0 in `act` and REFUSES as stale (never acts on the wrong page) — a
+follow-up will persist the target id so those refs are actionable. The AX-press/type arms
+delegate to the M1/M2-proven `click`/`type` verbs; a macOS-26 AX-window degeneracy made
+live AppKit window controls unreadable tonight, so those arms were validated via the
+proven delegates + unit tests + the end-to-end `actRef` dispatch (exercised by the CDP
+path) rather than a fresh AppKit press. Version 0.8.10-m4 → 0.8.11-m4.
+
+## 0.8.10-m4 — 2026-06-19 — `see`: ONE fused eye — AX + CDP + OCR (feature A, slice A2)
+
+**Added — `see <app> [--debug-port N] [--target n|title] [--no-ocr]`: the unified eye.**
+Before, a brain juggled THREE eyes by hand — `snapshot`/`find` (AX), `web read` (CDP
+DOM), `ocr` (Vision) — picking the eye, the element, AND the hand. `see` merges all
+three into ONE ranked, de-duplicated, **`@ref`-stamped** element list. Each row: ref,
+role, name, on-screen rect, source (`ax`|`cdp`|`ocr`), and the best actuation tier —
+everything the A3 actuator (`act "@ref"`) needs to auto-pick the hand.
+- **AX eye** (always) — the app's window tree via the proven `SnapshotWalker` (windows-
+  scoped so the menu bar never drowns the controls, cycle-safe, cold-tree settle+retry).
+- **CDP eye** (only when a port TRULY belongs to the target — an explicit `--debug-port`,
+  or a browser-surface app with its port open; NEVER probes 9222 for a random native app,
+  so it can't pull an unrelated browser's page into a native view) — the live DOM with
+  precise `@eN` handles.
+- **OCR eye** (best-effort; needs Screen Recording) — Vision text + screen rects, the
+  fallback for no-AX/no-DOM surfaces.
+
+**Fusion (pure, hermetically tested).** Dedup collapses the same element seen by more
+than one eye, keeping the most-actuatable source (cdp > ax > ocr) and preserving its
+`@eN` ref — by rect overlap (same coord space) OR an equal name that is **unique per
+source** (so two distinct same-named controls, e.g. two "Edit" links, are never merged
+and no real element is dropped). Ranking puts **visible + interactive + named** first
+(a 0×0/off-screen node sinks below anything a human can see), then reading order. Refs
+`@1…@N` assigned in ranked order. `see` PERSISTS the ref→record map (with the app PID,
+for A3 relaunch-staleness) so `act "@ref"` can re-actuate.
+
+**Honesty:** a pure READ (JSON status `.ok`, never verified) — every row comes from a
+real eye, a rectless element is marked `frame:?` (never a fabricated box), an app the
+eyes see nothing in is an honest empty list, and one eye failing (CDP unreachable / OCR
+no Screen Recording) NEVER blinds the others — the footer says exactly why each eye
+contributed nothing. CLI + the 38th MCP tool (`see`). 789 hermetic tests (+22).
+
+**Live-verified:** the AX eye on a real Finder window (real frames, visibility-first
+ranking — visible controls above 0×0 nodes); the CDP eye on an isolated throwaway Brave
+(`see <pid> --debug-port N` surfaced the page's `Login`/`Email`/heading as ranked `[cdp]`
+rows with refs, fused beside the AX chrome); OCR best-effort + honestly noted when the
+window exposed no capturable id (the same limitation the shipped `ocr` verb hits there).
+Adversarial honesty review: **PASS** (no fabrication, no over-claim, CDP-safety airtight,
+dedup can't drop a distinct element after the uniqueness gate). Version 0.8.9-m4 →
+0.8.10-m4.
+
+## 0.8.9-m4 — 2026-06-19 — `web key` + `--target`: fire app keybindings over CDP (feature A, slice A1)
+
+**Added — `web key "<chord>" <browser> [--debug-port N] [--target <n|title>]`: dispatch a
+real key/chord over CDP `Input.dispatchKeyEvent` so an app KEYBINDING/accelerator fires.**
+The fix for the Electron gap the Cursor walkthrough exposed — driving a keybinding-only
+command (e.g. Cursor's ⇧⌘L agent panel) was impossible: AX can't reach it and a `.value`
+set is a no-op. `web key` injects the chord at the renderer the way a real keypress does,
+so a web-app/Electron command bound to a chord triggers. Modifiers `cmd/shift/alt/ctrl` +
+any base key (letter / digit / `return|tab|escape|space|delete|arrows`). **Honesty:** a
+keystroke has NO in-page observable, so `web key` is ALWAYS reported dispatched-unverified
+(like the native `key` verb / `window raise`) — never a faked "it fired"; a bad chord
+(`unknownKey`/`badKeySpec`) REFUSES *before* any browser/socket is touched.
+
+**Added — `--target <n|title>` on the CDP web verbs (read/click/fill/type/select/html/eval/key):
+pick WHICH page/renderer to drive.** Multi-window Electron lists several page targets and
+the web verbs hit the FIRST only; `--target` selects a specific one by 1-based index (among
+debuggable pages) or a title/url substring. Default (omitted) is the first debuggable page,
+unchanged — every existing call site behaves identically. A `--target` that matches nothing
+REFUSES (`cdpTargetNotFound`, lists the real pages) rather than drive an arbitrary renderer.
+
+CLI + the 37th MCP tool (`web_key`) + `target` on the CDP tools' input schema. The pure
+chord→CDP-fields parse (`CDPKeySpec`: DOM `key`/`code` + Windows VK + the CDP modifier
+bitfield Alt=1|Ctrl=2|Meta=4|Shift=8, shift-uppercasing a letter's `key`) and the pure page
+chooser (`CDPTargetPick`: index/substring, skips non-debuggable targets, refuse-on-no-match)
+are hermetically tested (768 total, +24).
+
+**Live-verified — safe + headed, George's real Brave untouched (isolated throwaway via `web
+open --headed`):** a page with a `keydown` handler recording `(meta?cmd+)(shift?shift+)key`
+received `web key "cmd+shift+l"` as exactly **`cmd+shift+L`** (the ⇧⌘L mechanism Cursor's
+agent panel needs), `cmd+l` as `cmd+l` (lowercase, no shift); `web read --target 1` read the
+page, `--target 9` and `--target nonsuch` REFUSED (exit 1, listing the real page); `frobnicate`
+and `hyper+l` REFUSED before touching the browser; `web close` removed the throwaway with zero
+leftovers. Adversarial honesty review: **PASS** (no over-claim, no wrong-target, no
+behavior change when `--target` is absent). Version 0.8.8-m4 → 0.8.9-m4.
+
 ## 0.8.8-m4 — 2026-06-19 — Vision/OCR: the universal fallback eye (drive ANY app)
 
 **Added — `ocr` + `ocr-click`: locate + act on surfaces with no AX and no DOM** (a

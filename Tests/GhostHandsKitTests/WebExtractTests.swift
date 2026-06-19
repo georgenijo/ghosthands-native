@@ -79,9 +79,16 @@ final class WebExtractTests: XCTestCase {
 
     func testScopedExpressionRootsAtContainerAndStampsRefs() {
         let expr = CDPDigest.scopedEvaluateExpression(container: "#main")
-        XCTAssertTrue(expr.contains("document.querySelector(\"#main\")"))
-        XCTAssertTrue(expr.contains("root.querySelectorAll"))   // scoped, not document-wide
+        // The container is resolved PIERCING shadow roots / same-origin iframes
+        // (a scope inside a web component is reachable), with its selector embedded
+        // as a JSON literal — replaces the old boundary-stopping document.querySelector.
+        XCTAssertTrue(expr.contains("ghQuery(\"#main\")"))
+        XCTAssertTrue(expr.contains("node.querySelectorAll"))   // scoped walk, not document-wide
         XCTAssertTrue(expr.contains("found: false"))            // missing container → refuse signal
         XCTAssertTrue(expr.contains("data-gh-ref"))             // refs still stamped within scope
+        // The scoped collection ALSO descends into nested open shadow roots /
+        // same-origin iframes within the container (the piercing the feature adds).
+        XCTAssertTrue(expr.contains("shadowRoot"))
+        XCTAssertTrue(expr.contains("contentDocument"))
     }
 }

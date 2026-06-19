@@ -12,9 +12,14 @@ public extension GhostHands {
     struct ReplayRun: Sendable, Equatable {
         public let summary: ReplayPolicy.Summary
         public let total: Int
-        public init(summary: ReplayPolicy.Summary, total: Int) {
+        /// The structured per-step report (issue #3) — the CLI writes it as JSON /
+        /// JUnit when `--report-json` / `--report-junit` are given. Always built (it
+        /// is cheap + pure); emitting it is the CLI's choice.
+        public let report: FlowReport
+        public init(summary: ReplayPolicy.Summary, total: Int, report: FlowReport) {
             self.summary = summary
             self.total = total
+            self.report = report
         }
     }
 
@@ -39,18 +44,34 @@ public extension GhostHands {
         // of the count/stop/exit logic to silently drift).
         var results: [StepResult] = []
         results.reserveCapacity(total)
-        for step in flow.steps {
+        var records: [FlowStepRecord] = []
+        records.reserveCapacity(total)
+        var stopped = false
+        for (i, step) in flow.steps.enumerated() {
+            if stopped {
+                // A step after an early stop is recorded SKIPPED (not executed, not
+                // logged) so the report accounts for every step in the flow.
+                records.append(FlowStepRecord(
+                    index: i + 1, verb: step.verb, summary: step.summary,
+                    status: "skipped",
+                    message: "not executed — replay stopped at an earlier refuse"))
+                continue
+            }
             let exec = execute(step, settle: settle)
             results.append(exec.result)
             onStep(results.count, total, exec.line)
+            records.append(FlowStepRecord(
+                index: i + 1, verb: step.verb, summary: step.summary,
+                status: exec.result.label, message: exec.line))
 
             if ReplayPolicy.decide(after: exec.result, keepGoing: keepGoing) == .stop {
-                break
+                stopped = true
             }
         }
 
         let summary = ReplayPolicy.run(results, keepGoing: keepGoing)
-        return ReplayRun(summary: summary, total: total)
+        let report = FlowReport(flow: flowPath, total: total, summary: summary, steps: records)
+        return ReplayRun(summary: summary, total: total, report: report)
     }
 
     /// Read + decode a flow file from disk. A missing file or unreadable bytes is

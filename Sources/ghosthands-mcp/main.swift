@@ -88,20 +88,28 @@ struct GhostHandsMCP {
         let port = MCPProtocol.int("debugPort", from: arguments) ?? 9222
         let relaunch = flag("relaunch")
         let windowSel = optStr("window").map { WindowSelector.parse($0) }
+        // `target` picks WHICH CDP page/renderer to drive (multi-window Electron):
+        // an integer index or a title/url substring. Omitted → first debuggable page.
+        let pick = optStr("target").map { CDPTargetPick.parse($0) }
 
         do {
             switch name {
             // MARK: existing 8 verbs — UNCHANGED honesty mapping (per-Outcome).
             case "click":
-                let o = try GhostHands.click(name: arg("name"), appSpec: arg("app"))
+                let o = try GhostHands.click(name: arg("name"), appSpec: arg("app"),
+                                             locator: locator)
                 return MCPMapping.map(o)
             case "type":
+                // `type` disambiguates by role/nth only — its `text` arg is the text to
+                // TYPE, not a `--text` field-label locator (which would collide).
+                let typeLocator = LocatorSpec(role: optStr("role"), text: nil,
+                                              nth: MCPProtocol.int("nth", from: arguments))
                 let o = try GhostHands.type(text: arg("text"), field: arg("field"),
-                                            appSpec: arg("app"))
+                                            appSpec: arg("app"), locator: typeLocator)
                 return MCPMapping.map(o)
             case "set_value":
                 let o = try GhostHands.setValue(value: arg("value"), control: arg("control"),
-                                                appSpec: arg("app"))
+                                                appSpec: arg("app"), locator: locator)
                 return MCPMapping.map(o)
             case "doubleclick":
                 let o = try GhostHands.doubleclick(name: arg("name"), appSpec: arg("app"))
@@ -110,6 +118,11 @@ struct GhostHandsMCP {
                 let o = try GhostHands.act(action: arg("action"), name: arg("name"),
                                            appSpec: arg("app"))
                 return MCPMapping.map(o)
+            case "act_ref":
+                let r = try await GhostHands.actRef(
+                    ref: arg("ref"), appSpec: arg("app"),
+                    typeText: optStr("type"), submit: flag("submit"))
+                return MCPMapping.fromEnvelope(.fromActRef(r))
             case "menu":
                 let o = try GhostHands.menu(path: arg("path"), appSpec: arg("app"))
                 return MCPMapping.fromEnvelope(.fromMenu(o))
@@ -118,6 +131,14 @@ struct GhostHandsMCP {
             case "ocr":
                 let items = try await GhostHands.ocr(appSpec: arg("app"))
                 return MCPMapping.fromEnvelope(.fromOCR(items, app: arg("app")))
+            case "see":
+                // `see` uses an OPTIONAL debug port (nil ⇒ no CDP for a native app),
+                // not the 9222 default, so it never pulls an unrelated browser in.
+                let r = try await GhostHands.see(
+                    appSpec: arg("app"),
+                    debugPort: MCPProtocol.int("debugPort", from: arguments),
+                    pick: pick, runOCR: !flag("no_ocr"))
+                return MCPMapping.fromEnvelope(.fromSee(r))
             case "snapshot":
                 let o = try GhostHands.snapshot(appSpec: arg("app"))
                 let asJSON = (MCPProtocol.string("format", from: arguments) ?? "ax") == "json"
@@ -208,7 +229,8 @@ struct GhostHandsMCP {
                 return MCPMapping.fromEnvelope(.fromWindowRaise(o))
             case "web_read":
                 let (r, served) = try await GhostHands.webRead(
-                    browser: arg("browser"), lens: lens, debugPort: port, relaunch: relaunch)
+                    browser: arg("browser"), lens: lens, debugPort: port,
+                    relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebRead(r, served: served))
             case "web_tabs":
                 let (r, served) = try await GhostHands.webTabs(
@@ -217,32 +239,38 @@ struct GhostHandsMCP {
             case "web_click":
                 let r = try await GhostHands.webClick(
                     selector: arg("selector"), browser: arg("browser"), lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
             case "web_fill":
                 let r = try await GhostHands.webFill(
                     selector: arg("selector"), text: arg("text"), browser: arg("browser"),
-                    lens: lens, debugPort: port, relaunch: relaunch)
+                    lens: lens, debugPort: port, relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
             case "web_select":
                 let r = try await GhostHands.webSelect(
                     selector: arg("selector"), value: arg("value"), browser: arg("browser"),
-                    lens: lens, debugPort: port, relaunch: relaunch)
+                    lens: lens, debugPort: port, relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
             case "web_type":
                 let r = try await GhostHands.webType(
                     selector: arg("selector"), text: arg("text"), submit: flag("submit"),
-                    browser: arg("browser"), lens: lens, debugPort: port, relaunch: relaunch)
+                    browser: arg("browser"), lens: lens, debugPort: port,
+                    relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebActuate(r))
+            case "web_key":
+                let r = try await GhostHands.webKey(
+                    chord: arg("chord"), browser: arg("browser"), lens: lens,
+                    debugPort: port, relaunch: relaunch, pick: pick)
+                return MCPMapping.fromEnvelope(.fromWebKey(r))
             case "web_html":
                 let r = try await GhostHands.webHtml(
                     selector: arg("selector"), browser: arg("browser"), lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebHtml(r))
             case "web_eval":
                 let r = try await GhostHands.webEval(
                     js: arg("js"), browser: arg("browser"), lens: lens,
-                    debugPort: port, relaunch: relaunch)
+                    debugPort: port, relaunch: relaunch, pick: pick)
                 return MCPMapping.fromEnvelope(.fromWebEval(r))
 
             default:
