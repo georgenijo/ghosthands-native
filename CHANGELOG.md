@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.8.10-m4 — 2026-06-19 — `see`: ONE fused eye — AX + CDP + OCR (feature A, slice A2)
+
+**Added — `see <app> [--debug-port N] [--target n|title] [--no-ocr]`: the unified eye.**
+Before, a brain juggled THREE eyes by hand — `snapshot`/`find` (AX), `web read` (CDP
+DOM), `ocr` (Vision) — picking the eye, the element, AND the hand. `see` merges all
+three into ONE ranked, de-duplicated, **`@ref`-stamped** element list. Each row: ref,
+role, name, on-screen rect, source (`ax`|`cdp`|`ocr`), and the best actuation tier —
+everything the A3 actuator (`act "@ref"`) needs to auto-pick the hand.
+- **AX eye** (always) — the app's window tree via the proven `SnapshotWalker` (windows-
+  scoped so the menu bar never drowns the controls, cycle-safe, cold-tree settle+retry).
+- **CDP eye** (only when a port TRULY belongs to the target — an explicit `--debug-port`,
+  or a browser-surface app with its port open; NEVER probes 9222 for a random native app,
+  so it can't pull an unrelated browser's page into a native view) — the live DOM with
+  precise `@eN` handles.
+- **OCR eye** (best-effort; needs Screen Recording) — Vision text + screen rects, the
+  fallback for no-AX/no-DOM surfaces.
+
+**Fusion (pure, hermetically tested).** Dedup collapses the same element seen by more
+than one eye, keeping the most-actuatable source (cdp > ax > ocr) and preserving its
+`@eN` ref — by rect overlap (same coord space) OR an equal name that is **unique per
+source** (so two distinct same-named controls, e.g. two "Edit" links, are never merged
+and no real element is dropped). Ranking puts **visible + interactive + named** first
+(a 0×0/off-screen node sinks below anything a human can see), then reading order. Refs
+`@1…@N` assigned in ranked order. `see` PERSISTS the ref→record map (with the app PID,
+for A3 relaunch-staleness) so `act "@ref"` can re-actuate.
+
+**Honesty:** a pure READ (JSON status `.ok`, never verified) — every row comes from a
+real eye, a rectless element is marked `frame:?` (never a fabricated box), an app the
+eyes see nothing in is an honest empty list, and one eye failing (CDP unreachable / OCR
+no Screen Recording) NEVER blinds the others — the footer says exactly why each eye
+contributed nothing. CLI + the 38th MCP tool (`see`). 789 hermetic tests (+22).
+
+**Live-verified:** the AX eye on a real Finder window (real frames, visibility-first
+ranking — visible controls above 0×0 nodes); the CDP eye on an isolated throwaway Brave
+(`see <pid> --debug-port N` surfaced the page's `Login`/`Email`/heading as ranked `[cdp]`
+rows with refs, fused beside the AX chrome); OCR best-effort + honestly noted when the
+window exposed no capturable id (the same limitation the shipped `ocr` verb hits there).
+Adversarial honesty review: **PASS** (no fabrication, no over-claim, CDP-safety airtight,
+dedup can't drop a distinct element after the uniqueness gate). Version 0.8.9-m4 →
+0.8.10-m4.
+
 ## 0.8.9-m4 — 2026-06-19 — `web key` + `--target`: fire app keybindings over CDP (feature A, slice A1)
 
 **Added — `web key "<chord>" <browser> [--debug-port N] [--target <n|title>]`: dispatch a

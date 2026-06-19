@@ -173,6 +173,41 @@ extension JSONResult {
             fields: [("port", .int(r.port))] + GHJSONValue.optString("picked", r.note))
     }
 
+    /// `see` — a pure fused READ (status `.ok`). The fused rows ride in `fields.rows`
+    /// (each: ref, source, role, name, interactive, tier, optional rect/cdpRef), with
+    /// per-eye counts and any honest notes. Never a success/verified claim — it reads.
+    public static func fromSee(_ r: GhostHands.SeeResult) -> JSONResult {
+        let rowVals: [GHJSONValue] = r.rows.map { row in
+            var obj: [(key: String, value: GHJSONValue)] = [
+                ("ref", .string(row.ref)),
+                ("source", .string(row.source.rawValue)),
+                ("role", .string(row.role)),
+                ("name", .string(row.name)),
+                ("interactive", .bool(row.interactive)),
+                ("tier", .string(row.tier)),
+            ]
+            if let rect = row.rect {
+                obj.append(("rect", .array([
+                    .double(Double(rect.minX)), .double(Double(rect.minY)),
+                    .double(Double(rect.width)), .double(Double(rect.height))])))
+            }
+            if let ref = row.cdpRef { obj.append(("cdpRef", .string(ref))) }
+            return .object(obj)
+        }
+        var fields: [(key: String, value: GHJSONValue)] = [
+            ("count", .int(r.rows.count)),
+            ("ax", .int(r.axCount)),
+            ("cdp", .int(r.cdpCount)),
+            ("ocr", .int(r.ocrCount)),
+            ("rows", .array(rowVals)),
+        ]
+        if let p = r.port { fields.append(("port", .int(p))) }
+        if !r.notes.isEmpty {
+            fields.append(("notes", .array(r.notes.map { .string($0) })))
+        }
+        return JSONResult(verb: "see", status: .ok, app: r.app, fields: fields)
+    }
+
     /// `web key` — ALWAYS dispatched (a keystroke has no in-page observable, like the
     /// native `key` verb). The chord is the target; the served port a field.
     public static func fromWebKey(_ r: GhostHands.WebKeyResult) -> JSONResult {

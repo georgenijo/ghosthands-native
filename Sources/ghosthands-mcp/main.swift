@@ -121,6 +121,14 @@ struct GhostHandsMCP {
             case "ocr":
                 let items = try await GhostHands.ocr(appSpec: arg("app"))
                 return MCPMapping.fromEnvelope(.fromOCR(items, app: arg("app")))
+            case "see":
+                // `see` uses an OPTIONAL debug port (nil ⇒ no CDP for a native app),
+                // not the 9222 default, so it never pulls an unrelated browser in.
+                let r = try await GhostHands.see(
+                    appSpec: arg("app"),
+                    debugPort: MCPProtocol.int("debugPort", from: arguments),
+                    pick: pick, runOCR: !flag("no_ocr"))
+                return MCPMapping.fromEnvelope(.fromSee(r))
             case "snapshot":
                 let o = try GhostHands.snapshot(appSpec: arg("app"))
                 let asJSON = (MCPProtocol.string("format", from: arguments) ?? "ax") == "json"

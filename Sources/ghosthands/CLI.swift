@@ -60,6 +60,8 @@ struct GhostHandsCLI {
             runAssert(Array(args.dropFirst()))
         case "shot":
             await runShot(Array(args.dropFirst()))
+        case "see":
+            await runSee(Array(args.dropFirst()))
         case "ocr":
             await runOCR(Array(args.dropFirst()))
         case "ocr-click", "ocrclick":
@@ -1593,6 +1595,35 @@ struct GhostHandsCLI {
     // MARK: - ocr / ocr-click (Vision OCR — the universal fallback eye)
 
     @MainActor
+    static func runSee(_ rest: [String]) async {
+        // see <app> [--debug-port N] [--target n|title] [--no-ocr]
+        var args = scanJSON(rest)
+        let noOCR = args.contains("--no-ocr")
+        args.removeAll { $0 == "--no-ocr" }
+        let (targetRaw, afterTarget) = extractFlagValue("--target", from: args)
+        let pick = targetRaw.map { CDPTargetPick.parse($0) }
+        let (portRaw, afterPort) = extractFlagValue("--debug-port", from: afterTarget)
+        let debugPort = portRaw.flatMap { Int($0) }
+        guard let appSpec = afterPort.first else { usage() }
+        do {
+            let result = try await GhostHands.see(
+                appSpec: appSpec, debugPort: debugPort, pick: pick, runOCR: !noOCR)
+            if jsonMode { JSONResult.fromSee(result).emit(); return }
+            if !result.rows.isEmpty { print(SeeRender.render(result.rows)) }
+            var footer = "— \(result.rows.count) elements in \(result.app) "
+                + "(ax:\(result.axCount) cdp:\(result.cdpCount) ocr:\(result.ocrCount)"
+            if let p = result.port { footer += ", CDP port \(p)" }
+            footer += ")"
+            for n in result.notes { footer += "\n  · \(n)" }
+            FileHandle.standardError.write(Data((footer + "\n").utf8))
+        } catch let error as GhostHandsError {
+            fail("see", error)
+        } catch {
+            failUnexpected("see")
+        }
+    }
+
+    @MainActor
     static func runOCR(_ rest: [String]) async {
         let pos = scanJSON(rest)
         guard let appSpec = pos.first else { usage() }
@@ -2265,6 +2296,7 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
+          ghosthands see <app> [--debug-port N] [--target n|title] [--no-ocr]   ONE fused eye: AX + CDP DOM + Vision OCR → ranked, de-duped, @ref-stamped list (then `act "@ref"`)
           ghosthands ocr <app>                        Vision OCR the window: recognized text + screen rects (no AX/DOM needed; needs Screen Recording)
           ghosthands ocr-click "<text>" <app>         find a phrase via OCR + click it (visible HID, verified by pixel-diff; refuses on no/ambiguous match)
           ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)

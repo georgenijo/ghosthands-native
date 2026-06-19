@@ -193,6 +193,21 @@ public enum MCPTools {
              properties: [appProp],
              required: ["app"]),
 
+        Tool(name: "see",
+             description: "ONE fused eye over any app: merge the AX tree + (when a debug "
+                 + "port belongs to the target) the CDP DOM + Vision OCR into a single "
+                 + "ranked, de-duplicated, @ref-stamped element list (ref, role, name, "
+                 + "screen rect, source ax|cdp|ocr, actuation tier). The first half of "
+                 + "'drive any app in two calls' — then act \"@ref\". Pure READ; persists "
+                 + "the ref map for act; never fabricates an element.",
+             properties: [
+                 appProp,
+                 debugPortProp, targetProp,
+                 Property(name: "no_ocr", type: "boolean",
+                          description: "skip the Vision OCR eye for speed (default false)"),
+             ],
+             required: ["app"]),
+
         Tool(name: "apps",
              description: "List running GUI apps (name, bundle id, pid, frontmost) — "
                  + "the app-level eye for 'what's open?'. Pure read; faceless daemons "

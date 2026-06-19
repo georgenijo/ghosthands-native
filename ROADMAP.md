@@ -182,10 +182,14 @@ multi-window Electron forces guessing which renderer. Three looped slices:
   `CDPKeySpec`/`CDPTargetPick` hermetically tested; live-verified on an isolated
   throwaway Brave (a `keydown` handler received `cmd+shift+L` exactly; `--target`
   index/substring refuse paths proven). 37th MCP tool. Honesty review PASS.
-- **A2 — `see <app>`** (NEXT): one fused eye merging AX + CDP DOM + Vision OCR into a
-  single ranked, `@ref`-stamped element list (ref, role, name, rect, source, best
-  actuation tier).
-- **A3 — `act "@ref" <app>`**: the unified actuator — auto-pick the hand by source
+- **A2 ✅ shipped (0.8.10-m4)** — `see <app>` fuses AX + CDP DOM + Vision OCR into ONE
+  ranked, de-duplicated, `@ref`-stamped list (ref, role, name, rect, source, tier) and
+  persists the ref→record map for `act`. Visible+interactive+named ranked first; dedup
+  keeps the most-actuatable source (cdp>ax>ocr) and won't drop a distinct same-named
+  control (per-source name-uniqueness gate); CDP eye never pulls an unrelated browser
+  into a native view. Pure fusion hermetically tested (789 total). 38th MCP tool. Live-
+  verified (AX on Finder, CDP on a throwaway Brave). Honesty review PASS.
+- **A3 — `act "@ref" <app>`** (NEXT): the unified actuator — auto-pick the hand by source
   (AX press / CDP click-type / HID click), verify-or-refuse, stale-ref REFUSES.
   Capstone: drive Cursor's agent end-to-end with `web key` + `see`/`act`, no
   hand-built recipe.
