@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.8.18-m4 — 2026-06-19 — CodeRabbit round-2: three silent-failure refuses (honesty floor)
+
+**Fixed — three flag/data paths that silently succeeded instead of refusing.** All three
+violated verify-or-refuse by treating malformed input as a quiet default rather than a clean
+stop:
+- **`--target` with no value** (the CDP web verbs AND `see`) → was treated as absent, so the
+  command silently drove the DEFAULT renderer after the user explicitly tried to scope one.
+  Now REFUSES (exit 2, "expects a 1-based index or title/url substring") — the
+  refuse-on-ambiguity rule applied to the flag itself.
+- **`replay --report-json`/`--report-junit` with no path** → ran the replay and silently
+  skipped the requested CI artifact, so a caller got a passing run with the expected report
+  missing. Now REFUSES (exit 2, "expects a path") — malformed CI usage fails fast.
+- **JUnit report, unknown step status** → the `switch` `default: break` mapped any
+  unexpected status to a clean pass, which could convert malformed data into a green test.
+  Now an unrecognized status emits a `<failure>` ("invalid status: …"); `verified` is its own
+  explicit clean-pass case. +1 hermetic test locks it (839 total).
+
+No behavior change on any well-formed call (a `--target`/`--report-*` WITH its value, and the
+four real statuses, are byte-identical). `swift build` + 839 hermetic green. Version
+0.8.17-m4 → 0.8.18-m4.
+
 ## 0.8.17-m4 — 2026-06-19 — `ocr`/`shot` resolve the capture window robustly (no more CGWindowID hard-fail)
 
 **Fixed — `ocr` + `shot` no longer hard-fail with "could not resolve a CGWindowID".** Both

@@ -537,9 +537,13 @@ struct GhostHandsCLI {
             case "--target":
                 // `--target <n|title>` picks WHICH page/renderer a CDP verb drives
                 // (multi-window Electron). All-digit → 1-based index, else a
-                // title/url substring; a no-match REFUSES at the leaf.
-                if i + 1 < args.count { pick = CDPTargetPick.parse(args[i + 1]); i += 2 }
-                else { i += 1 }
+                // title/url substring; a no-match REFUSES at the leaf. A
+                // present-but-valueless flag REFUSES (don't silently drive the
+                // default renderer after the user explicitly tried to scope).
+                guard i + 1 < args.count else {
+                    refuse("web", message: "--target expects a 1-based index or title/url substring", code: 2)
+                }
+                pick = CDPTargetPick.parse(args[i + 1]); i += 2
             default: positional.append(args[i]); i += 1
             }
         }
@@ -1656,6 +1660,9 @@ struct GhostHandsCLI {
         let noOCR = args.contains("--no-ocr")
         args.removeAll { $0 == "--no-ocr" }
         let (targetRaw, afterTarget) = extractFlagValue("--target", from: args)
+        if args.contains("--target"), targetRaw == nil {
+            refuse("see", message: "--target expects a 1-based index or title/url substring", code: 2)
+        }
         let pick = targetRaw.map { CDPTargetPick.parse($0) }
         let (portRaw, afterPort) = extractFlagValue("--debug-port", from: afterTarget)
         let debugPort = portRaw.flatMap { Int($0) }
@@ -2186,9 +2193,15 @@ struct GhostHandsCLI {
             switch scanned[i] {
             case "--keep-going": keepGoing = true; i += 1
             case "--report-json":
-                if i + 1 < scanned.count { reportJSONPath = scanned[i + 1]; i += 2 } else { i += 1 }
+                guard i + 1 < scanned.count else {
+                    refuse("replay", message: "--report-json expects a path", code: 2)
+                }
+                reportJSONPath = scanned[i + 1]; i += 2
             case "--report-junit":
-                if i + 1 < scanned.count { reportJUnitPath = scanned[i + 1]; i += 2 } else { i += 1 }
+                guard i + 1 < scanned.count else {
+                    refuse("replay", message: "--report-junit expects a path", code: 2)
+                }
+                reportJUnitPath = scanned[i + 1]; i += 2
             default: if flowPath == nil { flowPath = scanned[i] }; i += 1
             }
         }

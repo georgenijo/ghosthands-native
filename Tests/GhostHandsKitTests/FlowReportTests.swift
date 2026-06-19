@@ -92,4 +92,16 @@ final class FlowReportTests: XCTestCase {
         XCTAssertTrue(xml.contains("&lt;a&gt;"))  // it is escaped
         XCTAssertTrue(xml.contains("&amp;"))
     }
+
+    func testJUnitUnknownStatusIsAFailureNeverASilentPass() {
+        // Honesty floor: a status outside {verified,dispatched,refused,skipped} is
+        // malformed data — it must surface as a <failure>, never get treated as a
+        // clean pass by the switch's default arm.
+        let summary = ReplayPolicy.Summary(executed: 1, verified: 0, dispatched: 0,
+                                           refused: 0, stoppedEarly: false)
+        let steps = [rec(1, "bogus", "garbage status")]
+        let xml = FlowReport(flow: "f", total: 1, summary: summary, steps: steps).junitXML()
+        XCTAssertTrue(xml.contains("<failure"))
+        XCTAssertTrue(xml.contains("invalid status: bogus"))
+    }
 }

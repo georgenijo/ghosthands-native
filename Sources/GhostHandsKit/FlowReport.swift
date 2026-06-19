@@ -106,6 +106,8 @@ public struct FlowReport: Sendable, Equatable, Codable {
             let name = "\(step.index). \(step.summary)"
             out += "    <testcase name=\"\(Self.xmlAttr(name))\" classname=\"ghosthands.flow\">\n"
             switch step.status {
+            case "verified":
+                break   // proven → a clean pass
             case "refused":
                 out += "      <failure message=\"\(Self.xmlAttr(step.message))\">"
                     + "\(Self.xmlText(step.message))</failure>\n"
@@ -116,7 +118,10 @@ public struct FlowReport: Sendable, Equatable, Codable {
                 out += "      <system-out>dispatched-unverified: "
                     + "\(Self.xmlText(step.message))</system-out>\n"
             default:
-                break   // verified → a clean pass
+                // An unrecognized status is malformed data — never silently pass
+                // it off as success (honesty floor). Mark it a failure.
+                out += "      <failure message=\"invalid status: \(Self.xmlAttr(step.status))\">"
+                    + "\(Self.xmlText(step.message))</failure>\n"
             }
             out += "    </testcase>\n"
         }
