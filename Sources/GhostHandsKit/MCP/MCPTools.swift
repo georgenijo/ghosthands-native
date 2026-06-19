@@ -172,6 +172,24 @@ public enum MCPTools {
              ],
              required: ["action", "name", "app"]),
 
+        Tool(name: "act_ref",
+             description: "The UNIFIED actuator: act on a @ref from the last `see` — "
+                 + "auto-picks the hand by the row's source (AX press/type if ax, CDP "
+                 + "click/type if cdp, visible HID click if ocr-only), then verifies via "
+                 + "that tier's witness or honestly under-claims. Pass type to type into "
+                 + "it instead of clicking. Refuses (re-see) on no snapshot, a different "
+                 + "app, an app relaunched since the see, or an unknown/stale ref.",
+             properties: [
+                 Property(name: "ref", type: "string",
+                          description: "a @N ref printed by `see` (e.g. \"@3\")"),
+                 appProp,
+                 Property(name: "type", type: "string",
+                          description: "OPTIONAL: text to type into the ref instead of clicking"),
+                 Property(name: "submit", type: "boolean",
+                          description: "with type, press Enter after (CDP only; default false)"),
+             ],
+             required: ["ref", "app"]),
+
         Tool(name: "menu",
              description: "Drive an app's menu bar by a ' > '-separated path "
                  + "(e.g. \"File > Open Recent > ~/proj\"). AXPress through each "

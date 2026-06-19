@@ -61,17 +61,17 @@ extension GhostHands {
         var notes: [String] = []
 
         // --- AX eye (the app's WINDOW tree) ---
-        // REUSE the proven snapshot walk: `SnapshotWalker.forest` is windows-driven
-        // (so the menu bar / collapsed menus never enter — those are the `menu` verb's
-        // surface), depth + visited bounded (cycle-safe), and we apply the SAME
-        // cold-tree settle+retry `snapshot` uses (a just-bound window hands back a
-        // sparse tree a beat before it fills). A raw one-shot walk misses that and
-        // reads almost nothing.
+        // Reuse the proven snapshot walk: `SnapshotWalker.forest` is windows-driven
+        // (the menu bar / collapsed menus never enter — those are the `menu` verb's
+        // surface), depth + visited bounded (cycle-safe), with the SAME cold-tree
+        // settle+retry `snapshot` uses. The role filter is belt-and-suspenders for
+        // any menu node that still slips in. (Note: a few macOS-26 apps expose a
+        // degenerate 0×0 window whose AX subtree is sparse — `see` reports what AX
+        // hands back honestly rather than fabricating controls.)
         var forest = SnapshotWalker.forest(of: target.element)
         if SnapshotRender.count(forest) == 0 {
             Thread.sleep(forTimeInterval: 0.4)
-            let fresh = Element(AXUIElementCreateApplication(target.pid))
-            forest = SnapshotWalker.forest(of: fresh)
+            forest = SnapshotWalker.forest(of: Element(AXUIElementCreateApplication(target.pid)))
         }
         var axInputs: [SeeInput] = []
         func collectAX(_ node: SnapshotNode) {
@@ -79,8 +79,6 @@ extension GhostHands {
             if !(f.role.map { Self.seeExcludedRoles.contains($0) } ?? false) {
                 let interactive = Finder.isActionable(f)
                 let name = SnapshotRender.displayName(f) ?? ""
-                // Keep actionable controls and named text; drop unnamed structural
-                // nodes (a container with no name and no action is noise).
                 if interactive || !name.isEmpty {
                     axInputs.append(SeeInput(source: .ax, role: f.role ?? "?", name: name,
                                              rect: f.frame, interactive: interactive))

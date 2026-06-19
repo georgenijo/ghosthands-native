@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.8.11-m4 — 2026-06-19 — `act "@ref"`: the unified actuator (feature A, slice A3 — wave complete)
+
+**Added — `act "@ref" <app> [--type "<text>"] [--submit]`: the unified hand.** The
+second half of "drive any app in two calls" — `see` looks, `act "@ref"` acts. It
+resolves a `@N` ref from the LAST `see` and **auto-picks the hand by the row's
+source**: an `ax` ref → the invisible AX press/type, a `cdp` ref → the precise CDP
+click/type (by its `@eN` handle), an `ocr`-only ref → the visible HID click. No more
+choosing the eye, the element, AND the hand by hand — `see` → `act` is the whole loop.
+
+**Honesty:** `act` invents no outcome — it DELEGATES to the existing per-tier verb
+(`click`/`type`/`web click`/`web type`/`ocr-click`), each of which verifies by its own
+witness (AX read-back/effect-witness, CDP navigation/value read-back, pixel-diff) or
+reports dispatched-unverified. The ref layer adds ONLY staleness REFUSES — no `see`
+snapshot (`seeRequired`), a snapshot for a different app, an app **relaunched** since the
+see (PID changed), or an unknown/now-gone ref (`refStale`) → REFUSE "re-see", never a
+guess. An `ocr`-only ref + `--type` REFUSES (`refNotTypeable`) rather than blind-type into
+a vision-located target with no field handle. An AX ref re-finds by name on a FRESH tree
+(refusing on not-found/ambiguity), never trusting the stored rect. The `act` verb is
+overloaded by a leading `@N` token, leaving the named-action `act open|confirm|…`
+unchanged. CLI + the 39th MCP tool (`act_ref`). Pure plan (staleness + hand selection)
+hermetically tested (799 total, +10); adversarial honesty review **PASS**.
+
+**Live-verified — the turnkey two-call flow, NO hand-built recipe:**
+- **CDP capstone:** `web open https://example.com` → `see <pid> --debug-port N` surfaced
+  the `Learn more` link as a ranked `[cdp]` row → `act "@1"` **auto-picked cdp-click and
+  reported VERIFIED: navigated example.com → iana.org**; a re-`act "@1"` REFUSED as stale
+  (the page navigated, the ref's element is gone) — verify-or-refuse end to end.
+- **Staleness gates:** unknown ref, app-mismatch (snapshot was Brave, acting on Finder),
+  and no-snapshot all REFUSED (exit 1) with honest "re-see" messages.
+- **Cursor (real Electron app, isolated throwaway instance — George's Cursor untouched):**
+  `web key "cmd+shift+l" Cursor --debug-port 9333` fired Cursor's real ⇧⌘L (the Agents
+  panel rendered), `see Cursor --debug-port 9333` surfaced 18 `[cdp]` renderer controls
+  (New Agent / Toggle Agents / Search Agents), and `act "@ref"` auto-picked cdp-click and
+  **honestly REFUSED via the occlusion guard** ("covered by a div — refusing to click
+  through an overlay") — no fake success. Driving Cursor's agent *to a reply* needs its
+  signed-in account + composer-specific UI navigation (the brain is George's, out of
+  scope per AGENTS.md); the tool's job — fire the keybinding, see the renderer, act on a
+  ref with honest verdicts — is proven on a real Electron app.
+
+**Known limitation (honest, non-blocking):** `see --target N` reads a specific renderer,
+but the chosen target isn't yet persisted, so a CDP `@ref` from a NON-default page
+reattaches to page 0 in `act` and REFUSES as stale (never acts on the wrong page) — a
+follow-up will persist the target id so those refs are actionable. The AX-press/type arms
+delegate to the M1/M2-proven `click`/`type` verbs; a macOS-26 AX-window degeneracy made
+live AppKit window controls unreadable tonight, so those arms were validated via the
+proven delegates + unit tests + the end-to-end `actRef` dispatch (exercised by the CDP
+path) rather than a fresh AppKit press. Version 0.8.10-m4 → 0.8.11-m4.
+
 ## 0.8.10-m4 — 2026-06-19 — `see`: ONE fused eye — AX + CDP + OCR (feature A, slice A2)
 
 **Added — `see <app> [--debug-port N] [--target n|title] [--no-ocr]`: the unified eye.**

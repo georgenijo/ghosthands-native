@@ -33,7 +33,14 @@ struct GhostHandsCLI {
         case "right-click", "rightclick":
             runRightClick(Array(args.dropFirst()))
         case "act":
-            runAct(Array(args.dropFirst()))
+            // Overload: `act "@ref" <app>` (the A3 ref actuator) vs the named-action
+            // `act <action> "<name>" <app>`. A leading `@N` token routes to the ref
+            // actuator; everything else keeps the historical behavior.
+            if isRefToken(scanJSON(Array(args.dropFirst())).first) {
+                await runActRef(Array(args.dropFirst()))
+            } else {
+                runAct(Array(args.dropFirst()))
+            }
         case "menu":
             runMenu(Array(args.dropFirst()))
         case "focus":
@@ -303,6 +310,48 @@ struct GhostHandsCLI {
     }
 
     // MARK: - act
+
+    @MainActor
+    /// True iff `s` is a `@N` ref token (the A3 actuator address), distinguishing
+    /// `act "@3" <app>` from the named-action `act open "<name>" <app>`.
+    static func isRefToken(_ s: String?) -> Bool {
+        guard let s, s.hasPrefix("@") else { return false }
+        let digits = s.dropFirst()
+        return !digits.isEmpty && digits.allSatisfy(\.isNumber)
+    }
+
+    @MainActor
+    static func runActRef(_ rest: [String]) async {
+        // act "@ref" <app> [--type "<text>"] [--submit]
+        var args = scanJSON(rest)
+        let submit = args.contains("--submit")
+        args.removeAll { $0 == "--submit" }
+        let (typeText, after) = extractFlagValue("--type", from: args)
+        guard after.count >= 2 else { usage() }
+        let ref = after[0]
+        let appSpec = after[1]
+        do {
+            let r = try await GhostHands.actRef(
+                ref: ref, appSpec: appSpec, typeText: typeText, submit: submit)
+            if jsonMode { JSONResult.fromActRef(r).emit() }
+            else { print(reportActRef(r)) }
+        } catch let error as GhostHandsError {
+            fail("act", error)
+        } catch {
+            failUnexpected("act")
+        }
+    }
+
+    /// Honest one-liner for `act "@ref"`: names the ref, what it was, the tier that
+    /// acted, and the verdict — VERIFIED quotes the per-tier witness; otherwise the
+    /// dispatched-unverified reason (exit 0, never a success claim).
+    static func reportActRef(_ r: RefActResult) -> String {
+        let what = "\(r.ref) (\(r.role) \(r.name.debugDescription), [\(r.source.rawValue)]) in \(r.app)"
+        if r.verified {
+            return "acted \(what) via \(r.tier) — verified: \(r.evidence)"
+        }
+        return "acted \(what) via \(r.tier) — \(r.evidence)"
+    }
 
     @MainActor
     static func runAct(_ rest: [String]) {
@@ -2297,6 +2346,7 @@ struct GhostHandsCLI {
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
           ghosthands see <app> [--debug-port N] [--target n|title] [--no-ocr]   ONE fused eye: AX + CDP DOM + Vision OCR → ranked, de-duped, @ref-stamped list (then `act "@ref"`)
+          ghosthands act "@ref" <app> [--type "<text>"] [--submit]   the unified actuator: act on a @ref from the last `see` — auto-picks the hand (AX/CDP/HID) by source, verifies or refuses (re-see if stale)
           ghosthands ocr <app>                        Vision OCR the window: recognized text + screen rects (no AX/DOM needed; needs Screen Recording)
           ghosthands ocr-click "<text>" <app>         find a phrase via OCR + click it (visible HID, verified by pixel-diff; refuses on no/ambiguous match)
           ghosthands web open [--headed] <url> [browser]                            launch an isolated throwaway session (auto-port, ready-wait); later web verbs auto-target it (default browser: Brave Browser)

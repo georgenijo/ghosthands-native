@@ -106,6 +106,18 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// loopback. We REFUSE rather than silently enable a debug surface; the `auto`
     /// lens never throws this (it falls back to the AX path unchanged). This is the
     /// ONLY place the no-port refuse is raised.
+    /// `act "@ref"` was called but no `see` snapshot exists yet — there is no ref
+    /// map to resolve against. REFUSE: run `see <app>` first (the look→act contract).
+    case seeRequired(app: String)
+    /// `act "@ref"` resolved a snapshot, but it is STALE for the requested action:
+    /// the snapshot is for a different app, the app was relaunched since the see
+    /// (PID changed), or the ref isn't in the snapshot. REFUSE "re-see" rather than
+    /// act on a guessed/stale identity.
+    case refStale(ref: String, reason: String)
+    /// `act "@ref" --type` targeted an OCR-only row — Vision located text on screen
+    /// but there is no field handle to type into (no AX value, no DOM node). REFUSE
+    /// rather than blind-type; re-`see` with a port/AX so the field is addressable.
+    case refNotTypeable(ref: String)
     case cdpPortClosed(app: String, port: Int)
     /// A `--target <n|title>` selector matched NO debuggable page/renderer on the
     /// port (an out-of-range index, or a title/url substring that hit nothing). We
@@ -298,6 +310,15 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
                 + "normalizing) — refusing to navigate to a malformed address"
         case let .openFailed(reason):
             return "could not launch the browser via open: \(reason)"
+        case let .seeRequired(app):
+            return "no see snapshot for \(app) — run `see \(app)` first, then "
+                + "`act \"@ref\"` on a ref it printed"
+        case let .refStale(ref, reason):
+            return "\(ref) is stale (\(reason)) — re-run `see` and use a fresh ref"
+        case let .refNotTypeable(ref):
+            return "\(ref) is an OCR-only target (located by Vision, no field handle) "
+                + "— can't type into it; re-`see` with a debug port / AX so the field "
+                + "is addressable"
         case let .cdpTargetNotFound(query, app, available):
             let list = available.isEmpty ? "(none)"
                 : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")

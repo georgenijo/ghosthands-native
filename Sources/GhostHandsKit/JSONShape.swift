@@ -173,6 +173,23 @@ extension JSONResult {
             fields: [("port", .int(r.port))] + GHJSONValue.optString("picked", r.note))
     }
 
+    /// `act "@ref"` — the unified actuator. Status mirrors the per-tier verdict
+    /// (`.verified` only when a witness proved an effect, else `.dispatched`); the
+    /// tier that acted + the ref's source ride in `fields`. Never a faked success.
+    public static func fromActRef(_ r: RefActResult) -> JSONResult {
+        return JSONResult(
+            verb: "act",
+            status: r.verified ? .verified : .dispatched,
+            app: r.app, target: r.ref,
+            evidence: r.evidence,
+            fields: [
+                ("tier", .string(r.tier)),
+                ("source", .string(r.source.rawValue)),
+                ("role", .string(r.role)),
+                ("name", .string(r.name)),
+            ])
+    }
+
     /// `see` — a pure fused READ (status `.ok`). The fused rows ride in `fields.rows`
     /// (each: ref, source, role, name, interactive, tier, optional rect/cdpRef), with
     /// per-eye counts and any honest notes. Never a success/verified claim — it reads.

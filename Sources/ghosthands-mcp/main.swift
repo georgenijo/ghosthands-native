@@ -113,6 +113,11 @@ struct GhostHandsMCP {
                 let o = try GhostHands.act(action: arg("action"), name: arg("name"),
                                            appSpec: arg("app"))
                 return MCPMapping.map(o)
+            case "act_ref":
+                let r = try await GhostHands.actRef(
+                    ref: arg("ref"), appSpec: arg("app"),
+                    typeText: optStr("type"), submit: flag("submit"))
+                return MCPMapping.fromEnvelope(.fromActRef(r))
             case "menu":
                 let o = try GhostHands.menu(path: arg("path"), appSpec: arg("app"))
                 return MCPMapping.fromEnvelope(.fromMenu(o))

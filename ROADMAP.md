@@ -189,10 +189,20 @@ multi-window Electron forces guessing which renderer. Three looped slices:
   control (per-source name-uniqueness gate); CDP eye never pulls an unrelated browser
   into a native view. Pure fusion hermetically tested (789 total). 38th MCP tool. Live-
   verified (AX on Finder, CDP on a throwaway Brave). Honesty review PASS.
-- **A3 — `act "@ref" <app>`** (NEXT): the unified actuator — auto-pick the hand by source
-  (AX press / CDP click-type / HID click), verify-or-refuse, stale-ref REFUSES.
-  Capstone: drive Cursor's agent end-to-end with `web key` + `see`/`act`, no
-  hand-built recipe.
+- **A3 ✅ shipped (0.8.11-m4)** — `act "@ref" <app> [--type] [--submit]` resolves a ref
+  from the last `see` and AUTO-PICKS the hand by source (AX press/type, CDP click/type,
+  HID click), delegating to the proven per-tier verb (verify-or-refuse). Staleness gates
+  refuse on no-snapshot / app-mismatch / relaunch (PID) / unknown-ref; ocr+type refuses.
+  Pure plan hermetically tested (799 total). 39th MCP tool (`act_ref`). Live-verified:
+  the CDP capstone (`see` → `act @ref` VERIFIED by navigation, then stale-refuse) and a
+  real isolated Cursor (`web key cmd+shift+l` opened the Agents panel, `see` surfaced the
+  renderer, `act` honestly refused on occlusion). Honesty review PASS.
+
+**Feature A: COMPLETE (A1 + A2 + A3 shipped).** A brain now drives any Mac app in two
+calls — `see <app>` (one fused eye: AX + CDP + OCR, ranked + `@ref`-stamped) then
+`act "@ref"` (auto-picked hand, verify-or-refuse) — plus `web key` to fire keybindings
+no other eye/hand can reach. The honesty contract held throughout (navigation-verified,
+occlusion-refused, stale-refused, dispatched-unverified — never a fake success).
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the

@@ -113,7 +113,7 @@ final class MCPTests: XCTestCase {
         // the early 8 (unchanged)
         "click", "type", "set_value", "doubleclick", "act", "snapshot", "find", "shot",
         // act tier (named control)
-        "focus", "right_click", "scroll", "drag", "menu",
+        "focus", "right_click", "scroll", "drag", "menu", "act_ref",
         // read + checked tiers
         "extract", "dialog", "wait", "assert", "apps", "ocr", "see",
         // system tier
