@@ -234,9 +234,16 @@ identity), #2 (always-on daemon + AXObserver — deferred, needs a design pass).
   sane deadline (System Settings missed even at 6s) — while the poll adds latency to every
   Dock click. Revive only with an EVENT-based signal (`NSWorkspace` launch/activate
   notifications — instant, no poll) instead of polling. Honest as-built; just not worth it.
-- Other ideas: cross-frame click-coordinate translation (so iframe targets become clickable,
-  not just readable); OCR window-id robustness (`could not resolve a CGWindowID` blocks
-  `see`'s OCR eye on background/desktop windows); `see --in <css>` honoring `--target`.
+- **OCR window-id robustness ✅ (0.8.17)** — `ocr`/`shot` fall back to PID-matched window
+  selection when the AX→CGWindowID bridge fails (no more `could not resolve a CGWindowID`).
+  NB: a separate Screen-Recording capture-grant issue on the rebuilt CLI binary (`Failed to
+  start stream…`, affects `shot` too) blocked a full end-to-end OCR demo — needs the binary
+  re-granted Screen Recording in System Settings to confirm the OCR eye live.
+- **Remaining unblocked, deliberately deferred:** cross-frame click-coordinate translation
+  (so iframe `@ref`s become CLICKABLE, not just readable — currently an honest refuse). Niche
+  + honesty-sensitive (the coord math is exactly the fabrication-risk the iframe refuse
+  guards); worth doing carefully with fresh attention rather than at a session tail.
+- Tiny: `see --in <css>` honoring `--target`.
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
