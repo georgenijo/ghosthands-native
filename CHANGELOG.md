@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.8.19-m4 — 2026-06-19 — backlog sweep: digest ARIA/contenteditable, iframe read-coords, act identity + non-actionable refuse, `see --in`+`--target`
+
+Five remaining code-backlog items, each built + hermetically tested + adversarially
+honesty-reviewed in an isolated worktree, then gated + integrated in the main thread
+(the review caught a real regression in one — see below — which was fixed before
+integration, not shipped). 838 → **868 hermetic tests**, `swift build` green.
+
+**Added — `web read`/`see` surface ARIA-role / `[onclick]` / `<summary>` /
+contenteditable controls (CDP digest).** The digest queried only NATIVE tags
+(`a`/`button`/`input`/`select`/`textarea`), so common Electron/web controls
+(`div[role=button]`, click-handler divs, `<summary>`, Lexical/ProseMirror/Monaco
+contenteditable editors) never appeared and got no `@eN` ref. A single shared in-page
+gate (`ghInteractiveSelector` + `ghIsInteractive`) now also treats as interactive any
+element with an ARIA interactive role, `[onclick]`, `<summary>`, or
+`[contenteditable]`/`isContentEditable` — additive (native behavior preserved). HONESTY:
+only SURFACES elements really present in the (open shadow / same-origin) DOM; a stamped
+ref re-resolves by its own `data-gh-ref`; no verdict logic touched; `axRole` rendering of
+the new roles is display-only.
+
+**Added — same-origin iframe rects translate to top-level coords (READ-side only).**
+`ghCollectRow` reported iframe-LOCAL `getBoundingClientRect()` x/y while the digest /
+`see` / occlusion / pixel-targeting use TOP-LEVEL coords. A new `ghFrameOffset` walks UP
+the `frameElement` chain (cross-origin ancestor throws → walk stops, keeping only the
+same-origin partial sum, never a guess) and the digest + `web find` ranking now report
+translated coords. HONESTY — the click path is the single highest fabrication-risk change
+in the repo, so `web click` on an iframe target **still REFUSES** (`iframeClickUnsupported`):
+the occlusion hit-test runs inside the iframe's own document and can't see a top-document
+overlay, so a translated click is not PROVABLY safe — an honest refuse beats a click at
+unprovable-occlusion geometry. Read-side coords are now correct; click-enable stays
+deferred. Pure offset-accumulation math is hermetically tested.
+
+**Added — `act "@ref"` pins an AX ref by IDENTITY (role + name + ranked nth), re-resolved
+on a fresh tree.** Before, an AX ref collapsed back to `record.name` and re-found by name
+alone — with two distinct same-named controls it could refuse needlessly or, after UI
+churn, press the WRONG survivor. `see` now persists `axIndex` (the nth among same-(role,name)
+actuation candidates, only when the actuation-path walk agrees on the count) and `act`
+re-resolves that `LocatorSpec` (`role`+`nth`) on a FRESH tree. HONESTY: never trusts the
+stored rect; an unpinnable group stays name-only and REFUSES on ambiguity; a stale nth past
+the surviving count REFUSES (out-of-range) rather than acting on a lone possibly-wrong
+survivor.
+
+**Fixed — `act "@ref"` refuses a NON-interactive (read-only) AX row.** Hand selection
+ignored `SeeRecord.interactive`, so a plain text/heading row `see` surfaced for reading
+(tier `ax-read`) could be pressed/typed. Now the `.ax` arm refuses `not-actionable`
+(`refNotActionable`). **The adversarial review caught a regression in the first cut** — a
+broad `interactive`-only guard would have refused EVERY OCR row (`see` builds all OCR rows
+`interactive:false`, yet they are HID-clickable by design), silently killing the shipped
+HID-click-by-ref path; the integrated fix is AX-SCOPED, with a regression test locking that
+a real-shaped OCR row still picks `.hidClick`. `see` already advertises `ax-read` for these
+rows, so the refuse matches what `see` surfaced.
+
+**Added — `see --in <css>` honors `--target <n|title>`.** `see` did not parse `--in` at
+all (the only fused verb missing it); now it composes a CDP-eye CSS scope with the renderer
+pick, picking the renderer FIRST so a `--target` no-match REFUSES (`cdpTargetNotFound`)
+before any scope probe — never a silent fall-back to the default renderer; a no-match
+container REFUSES distinct from an honest-empty one; a CDP-eye failure becomes a note and
+never blinds the AX/OCR eyes. The `see` arg parse is extracted into a pure, hermetically
+tested `SeeArgs`. Closes the ROADMAP "Tiny: `see --in` honoring `--target`" item.
+
+Version 0.8.18-m4 → 0.8.19-m4.
+
 ## 0.8.18-m4 — 2026-06-19 — CodeRabbit round-2: three silent-failure refuses (honesty floor)
 
 **Fixed — three flag/data paths that silently succeeded instead of refusing.** All three

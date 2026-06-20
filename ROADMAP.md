@@ -239,10 +239,16 @@ identity), #2 (always-on daemon + AXObserver — deferred, needs a design pass).
   NB: a separate Screen-Recording capture-grant issue on the rebuilt CLI binary (`Failed to
   start stream…`, affects `shot` too) blocked a full end-to-end OCR demo — needs the binary
   re-granted Screen Recording in System Settings to confirm the OCR eye live.
-- **Remaining unblocked, deliberately deferred:** cross-frame click-coordinate translation
-  (so iframe `@ref`s become CLICKABLE, not just readable — currently an honest refuse). Niche
-  + honesty-sensitive (the coord math is exactly the fabrication-risk the iframe refuse
-  guards); worth doing carefully with fresh attention rather than at a session tail.
+- **iframe read-coords ✅ (0.8.19)** — same-origin iframe rects now translate to TOP-LEVEL
+  coords (`ghFrameOffset` walks the `frameElement` chain; cross-origin throws → walk stops),
+  so `web read`/`see`/`web find` report + rank an iframe control at its real on-screen
+  position. **Click-enable stays deferred (deliberate):** `web click` on an iframe target
+  still REFUSES (`iframeClickUnsupported`) — the occlusion hit-test runs inside the iframe's
+  own document and can't see a top-document overlay, so a translated click isn't PROVABLY
+  safe; an honest refuse beats a click at unprovable-occlusion geometry. Remaining deferred
+  piece: making iframe `@ref`s CLICKABLE (needs a provably-safe cross-frame occlusion test).
+- **digest ARIA/contenteditable ✅ (0.8.19)** · **`act "@ref"` AX identity-pin ✅ (0.8.19)** ·
+  **`act "@ref"` non-actionable refuse ✅ (0.8.19)** — see CHANGELOG 0.8.19.
 - ~~Tiny: `see --in <css>` honoring `--target`.~~ ✅ shipped — `see --in <css>` scopes
   the CDP eye to a container and COMPOSES with `--target`: the scope reads off the
   `--target`-picked renderer, a `--target` no-match skips the CDP eye (note) rather
