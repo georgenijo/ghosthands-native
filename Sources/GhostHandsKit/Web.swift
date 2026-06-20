@@ -416,6 +416,51 @@ public enum CDPDigest {
     };
     """
 
+    /// The SINGLE source of truth for "is this element an interactive control the
+    /// digest should surface + stamp a ref on". Shared by BOTH digests (page +
+    /// scoped) and the ref-stamp gate so the CSS query and the per-element gate can
+    /// never drift apart. Extends the original NATIVE-tag set additively: a control
+    /// is interactive iff it is one of the native interactive tags
+    /// (a/button/input/select/textarea), OR it carries an ARIA interactive role
+    /// (button, link, checkbox, radio, switch, tab, menuitem(+checkbox/radio),
+    /// option, textbox, combobox, slider, spinbutton, searchbox), OR it has an
+    /// [onclick] handler, is a <summary> (a native disclosure trigger), or is
+    /// contenteditable. This matches the `--text` resolver's candidate set so any
+    /// element the digest STAMPS is later RE-FINDABLE by that resolver — never a
+    /// fabricated handle. HONESTY: it only classifies elements ACTUALLY present in
+    /// the (open shadow / same-origin) DOM; nothing here invents a node.
+    static let interactiveJS = """
+    const ghAriaInteractiveRoles = new Set(['button','link','checkbox','radio',
+      'switch','tab','menuitem','menuitemcheckbox','menuitemradio','option',
+      'textbox','combobox','slider','spinbutton','searchbox']);
+    const ghNativeInteractiveTags = new Set(['a','button','input','select','textarea']);
+    // The CSS query that GATHERS interactive candidates (the union above). Native
+    // tags first (so currently-surfaced controls are never dropped), then the ARIA
+    // roles, [onclick], <summary>, and the two contenteditable forms.
+    const ghInteractiveSelector = ['a','button','input','select','textarea','summary',
+      '[onclick]', '[contenteditable=""]', '[contenteditable="true"]', '[contenteditable="plaintext-only"]']
+      .concat([...ghAriaInteractiveRoles].map((r) => '[role="' + r + '"]'))
+      .join(',');
+    // The PER-ELEMENT gate the ref stamp uses (an element gathered by a parent
+    // selector but not itself interactive must NOT get a ref). Guarded so a missing
+    // getAttribute / detached node degrades to false rather than throwing.
+    const ghIsInteractive = (el) => {
+      try {
+        const tag = el.tagName.toLowerCase();
+        if (ghNativeInteractiveTags.has(tag)) return true;
+        if (tag === 'summary') return true;
+        const role = (el.getAttribute('role') || '').trim().toLowerCase();
+        if (role && ghAriaInteractiveRoles.has(role)) return true;
+        if (el.hasAttribute('onclick')) return true;
+        if (el.isContentEditable === true) return true;
+        const ce = (el.getAttribute('contenteditable') || '').toLowerCase();
+        if (ce === '' && el.hasAttribute('contenteditable')) return true;
+        if (ce === 'true' || ce === 'plaintext-only') return true;
+      } catch (e) {}
+      return false;
+    };
+    """
+
     /// JS that walks EVERY reachable root — the document, plus each OPEN shadow
     /// root, plus each SAME-ORIGIN iframe's contentDocument — letting a caller run
     /// its own per-root `querySelectorAll`. This is the shadow/iframe piercing the
@@ -457,6 +502,34 @@ public enum CDPDigest {
       };
       walk(document);
     };
+    // The cumulative TOP-LEVEL offset of an element that may live inside one or more
+    // SAME-ORIGIN iframes. `getBoundingClientRect()` is FRAME-LOCAL (relative to the
+    // element's own iframe viewport), but the digest / see / occlusion / click all
+    // speak TOP-LEVEL viewport coords. Walk UP the `frameElement` chain summing each
+    // frame element's own bounding rect (each is expressed in ITS parent's viewport,
+    // so the running sum lands the element in the top document's coords). HONESTY:
+    //   - the top document has no frameElement → offset {0,0} (a plain element is
+    //     unchanged, never shifted).
+    //   - a CROSS-ORIGIN frame throws on `frameElement` / its window access; the
+    //     try/catch STOPS the walk there. We never reach a cross-origin frame's
+    //     contents anyway (contentDocument throws), so this is a defensive guard, not
+    //     a guessed offset — a partial sum is only ever returned for reachable
+    //     same-origin frames we actually descended.
+    // A `guard` counter bounds a pathological self-referential frame chain.
+    const ghFrameOffset = (el) => {
+      let x = 0, y = 0, guard = 0;
+      try {
+        let win = el.ownerDocument && el.ownerDocument.defaultView;
+        while (win && win.frameElement && guard++ < 50) {
+          const fr = win.frameElement.getBoundingClientRect();
+          x += fr.left; y += fr.top;
+          const parent = win.parent;
+          if (parent === win) break;   // top window is its own parent — stop
+          win = parent;
+        }
+      } catch (e) { /* cross-origin ancestor: stop, keep the same-origin partial sum */ }
+      return { x, y };
+    };
     // A shadow/iframe-piercing single-element lookup: return the FIRST element
     // matching `sel` across all reachable roots, or null. Used to RE-FIND a
     // `[data-gh-ref]`/`[data-gh-find]` node stamped inside a shadow root — a plain
@@ -489,8 +562,14 @@ public enum CDPDigest {
     /// so the page digest, the scoped digest, AND the shadow/iframe descent all emit
     /// IDENTICALLY-shaped rows from ONE definition (no drift between paths).
     static let collectRowJS = """
-    const ghCollectRow = (el, out, ctx, interactive) => {
+    const ghCollectRow = (el, out, ctx) => {
       const r = el.getBoundingClientRect();
+      // Translate a SAME-ORIGIN-iframe element's frame-local rect to TOP-LEVEL
+      // viewport coords by summing its `frameElement` offset chain — so a control
+      // inside an iframe reads at the SAME coordinate space as a top-level control
+      // (and `see` / occlusion / pixel-targeting stay consistent). A plain
+      // (non-framed) element gets offset {0,0}, i.e. is unchanged.
+      const off = ghFrameOffset(el);
       const tag = el.tagName.toLowerCase();
       const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
       // Role: an explicit aria role wins; else the tag — but an <input> is
@@ -503,11 +582,15 @@ public enum CDPDigest {
       }
       const name = accName(el, tag);
       // Stamp a shared ref on INTERACTIVE elements only (headings are read for
-      // context, never clicked). The attribute IS the persistent ref store: it
-      // lives in the browser's DOM across separate CLI processes, and its
-      // absence after a nav/re-render is the honest staleness signal.
+      // context, never clicked). `ghIsInteractive` is the shared gate (native tag
+      // OR ARIA interactive role OR [onclick]/<summary>/contenteditable) — so a
+      // div[role=button], an [onclick] handler, a <summary>, or a contenteditable
+      // editor gets a usable @eN, not just native tags. The attribute IS the
+      // persistent ref store: it lives in the browser's DOM across separate CLI
+      // processes, and its absence after a nav/re-render is the honest staleness
+      // signal. (Every stamped node is re-findable by the same `--text` resolver.)
       let ref = '';
-      if (interactive.includes(tag)) { ref = 'e' + (++ctx.n); el.setAttribute('data-gh-ref', ref); }
+      if (ghIsInteractive(el)) { ref = 'e' + (++ctx.n); el.setAttribute('data-gh-ref', ref); }
       // Form-control STATE (issue #8). A checkbox/radio's signal is `checked`,
       // NOT its meaningless default value "on" — so we emit checked and leave
       // value empty for those. A <select> reports its chosen option's text.
@@ -525,7 +608,7 @@ public enum CDPDigest {
       if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
       const disabled = !!el.disabled;
       out.push({ ref, role, name, value, checked, selected, expanded, disabled,
-                 x: r.x, y: r.y, w: r.width, h: r.height });
+                 x: r.x + off.x, y: r.y + off.y, w: r.width, h: r.height });
     };
     """
 
@@ -538,20 +621,23 @@ public enum CDPDigest {
     (() => {
       \(accNameJS)
       \(shadowPierceJS)
+      \(interactiveJS)
       \(collectRowJS)
       // Clear any `data-gh-ref` from a PRIOR read first (across ALL roots): refs are
       // valid only until the next read or a navigation, so a re-read SUPERSEDES — old
       // handles must not linger and collide with the new numbering.
       ghClearRefs();
       const out = [];
-      const interactive = ['a','button','input','select','textarea'];
-      const text = ['h1','h2','h3','h4','h5','h6'];
-      const wanted = interactive.concat(text).join(',');
+      // Gather the union of interactive controls (native tags + ARIA roles +
+      // [onclick]/<summary>/contenteditable) AND text/heading context nodes. The
+      // ref gate inside ghCollectRow stamps ONLY the genuinely interactive ones.
+      const text = ['h1','h2','h3','h4','h5','h6'].join(',');
+      const wanted = ghInteractiveSelector + ',' + text;
       const ctx = { n: 0 };
       ghForEachRoot((root) => {
         let els;
         try { els = root.querySelectorAll(wanted); } catch (e) { els = []; }
-        for (const el of els) ghCollectRow(el, out, ctx, interactive);
+        for (const el of els) ghCollectRow(el, out, ctx);
       });
       return out;
     })()
@@ -572,14 +658,16 @@ public enum CDPDigest {
         (() => {
           \(accNameJS)
           \(shadowPierceJS)
+          \(interactiveJS)
           \(collectRowJS)
           const root = ghQuery(\(sel));
           if (!root) return { found: false };
           ghClearRefs();
           const out = [];
-          const interactive = ['a','button','input','select','textarea'];
-          const text = ['h1','h2','h3','h4','h5','h6'];
-          const wanted = interactive.concat(text).join(',');
+          // Same union as the page digest: native interactive tags + ARIA roles +
+          // [onclick]/<summary>/contenteditable, plus text/heading context nodes.
+          const text = ['h1','h2','h3','h4','h5','h6'].join(',');
+          const wanted = ghInteractiveSelector + ',' + text;
           const ctx = { n: 0 };
           // Walk the container's own subtree, then descend into any open shadow
           // roots / same-origin iframes nested anywhere under it.
@@ -589,7 +677,7 @@ public enum CDPDigest {
             seen.add(node);
             let els;
             try { els = node.querySelectorAll(wanted); } catch (e) { els = []; }
-            for (const el of els) ghCollectRow(el, out, ctx, interactive);
+            for (const el of els) ghCollectRow(el, out, ctx);
             let all;
             try { all = node.querySelectorAll('*'); } catch (e) { all = []; }
             for (const el of all) {
@@ -612,12 +700,16 @@ public enum CDPDigest {
     public static func axRole(for role: String) -> String {
         switch role.lowercased() {
         case "a", "link": return "AXLink"
-        case "button": return "AXButton"
-        case "input", "textbox", "textfield": return "AXTextField"
+        case "button", "summary": return "AXButton"
+        case "input", "textbox", "textfield", "searchbox": return "AXTextField"
         case "textarea": return "AXTextArea"
         case "select", "combobox": return "AXComboBox"
-        case "checkbox": return "AXCheckBox"
-        case "radio": return "AXRadioButton"
+        case "checkbox", "menuitemcheckbox", "switch": return "AXCheckBox"
+        case "radio", "menuitemradio": return "AXRadioButton"
+        case "tab": return "AXTab"
+        case "menuitem", "option": return "AXMenuItem"
+        case "slider": return "AXSlider"
+        case "spinbutton": return "AXStepper"
         case "h1", "h2", "h3", "h4", "h5", "h6", "heading": return "AXHeading"
         default: return role
         }
@@ -978,7 +1070,8 @@ extension GhostHands {
     /// Slice 1's digest is flat (point-in-time, no nested refs).
     @MainActor
     static func webReadCDP(target: Target, port: Int,
-                           pick: CDPTargetPick.Selector? = nil) async throws -> WebReadResult {
+                           pick: CDPTargetPick.Selector? = nil,
+                           scope: String? = nil) async throws -> WebReadResult {
         // Connect to a PAGE target's OWN debugger socket, not the browser-level
         // /json/version endpoint — the browser endpoint has no Runtime domain
         // (it answers "Runtime.enable wasn't found"). Default reads the FIRST
@@ -986,6 +1079,13 @@ extension GhostHands {
         // (multi-window Electron). Honest empty when the port lists no debuggable
         // page at all; a `--target` that matches nothing REFUSES (never an arbitrary
         // renderer).
+        //
+        // `scope` (`see --in <css>`) restricts the digest to a CSS container on the
+        // PICKED renderer — so `--in` and `--target` COMPOSE: the scope is read off
+        // the `--target` page, and a `--target` no-match REFUSES here (above, before
+        // any scope probe) rather than silently scoping the default renderer. A
+        // scope matching no container REFUSES distinctly (`selectorNotFound`); a
+        // present-but-empty container reads honestly empty.
         let targets = try await CDPDiscovery.list(port: port, app: target.name)
         let pages = targets.filter { !$0.webSocketDebuggerUrl.isEmpty }
         guard !pages.isEmpty else {
@@ -999,12 +1099,24 @@ extension GhostHands {
         try assertUnambiguousPick(pick, choice, app: target.name, pages: pages)
         let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
-        let result = try await session.call("Runtime.evaluate", params: [
-            "expression": CDPDigest.evaluateExpression,
-            "returnByValue": true,
-            "awaitPromise": true,
-        ])
-        let rows = evaluateRows(from: result)
+        let rows: [[String: Any]]
+        if let scope {
+            // Scoped digest: the container is read on the SAME `--target`-picked
+            // page. A no-match container REFUSES (never a fabricated empty scope).
+            let reply = try await evaluateObject(
+                session, CDPDigest.scopedEvaluateExpression(container: scope))
+            guard WebActuate.boolValue(reply["found"]) else {
+                throw GhostHandsError.selectorNotFound(selector: scope, app: target.name)
+            }
+            rows = (reply["rows"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        } else {
+            let result = try await session.call("Runtime.evaluate", params: [
+                "expression": CDPDigest.evaluateExpression,
+                "returnByValue": true,
+                "awaitPromise": true,
+            ])
+            rows = evaluateRows(from: result)
+        }
         let entries = CDPDigest.entries(fromEvaluate: rows)
         // A reachable CDP page IS a web surface (hasWebArea = true), so the CLI
         // footer reports element count rather than "no page". Carry the chosen

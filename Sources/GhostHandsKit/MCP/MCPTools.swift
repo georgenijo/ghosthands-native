@@ -224,6 +224,10 @@ public enum MCPTools {
              properties: [
                  appProp,
                  debugPortProp, targetProp,
+                 Property(name: "in", type: "string",
+                          description: "scope the CDP eye to a CSS container (e.g. "
+                              + "\"#main\"); composes with target — read off the picked "
+                              + "renderer; a no-match container refuses"),
                  Property(name: "no_ocr", type: "boolean",
                           description: "skip the Vision OCR eye for speed (default false)"),
              ],

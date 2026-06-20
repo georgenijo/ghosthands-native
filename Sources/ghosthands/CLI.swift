@@ -1655,21 +1655,25 @@ struct GhostHandsCLI {
 
     @MainActor
     static func runSee(_ rest: [String]) async {
-        // see <app> [--debug-port N] [--target n|title] [--no-ocr]
-        var args = scanJSON(rest)
-        let noOCR = args.contains("--no-ocr")
-        args.removeAll { $0 == "--no-ocr" }
-        let (targetRaw, afterTarget) = extractFlagValue("--target", from: args)
-        if args.contains("--target"), targetRaw == nil {
-            refuse("see", message: "--target expects a 1-based index or title/url substring", code: 2)
+        // see <app> [--debug-port N] [--target n|title] [--in <css>] [--no-ocr]
+        // The PURE parse (flag extraction + `--in`/`--target` composition + the
+        // valueless-flag refuses) lives in `SeeArgs` so it's hermetically testable.
+        let parsed: SeeArgs.Parsed
+        switch SeeArgs.parse(scanJSON(rest)) {
+        case let .ok(p):
+            parsed = p
+        case let .refuse(.missingValue(flag)):
+            let what = flag == "--in"
+                ? "--in expects a CSS selector to scope the read"
+                : "--target expects a 1-based index or title/url substring"
+            refuse("see", message: what, code: 2)
+        case .refuse(.missingApp):
+            usage()
         }
-        let pick = targetRaw.map { CDPTargetPick.parse($0) }
-        let (portRaw, afterPort) = extractFlagValue("--debug-port", from: afterTarget)
-        let debugPort = portRaw.flatMap { Int($0) }
-        guard let appSpec = afterPort.first else { usage() }
         do {
             let result = try await GhostHands.see(
-                appSpec: appSpec, debugPort: debugPort, pick: pick, runOCR: !noOCR)
+                appSpec: parsed.appSpec, debugPort: parsed.debugPort, pick: parsed.pick,
+                scope: parsed.scope, runOCR: parsed.runOCR)
             if jsonMode { JSONResult.fromSee(result).emit(); return }
             if !result.rows.isEmpty { print(SeeRender.render(result.rows)) }
             var footer = "— \(result.rows.count) elements in \(result.app) "
@@ -2394,7 +2398,7 @@ struct GhostHandsCLI {
           ghosthands focus "<name>" <app>             give a control keyboard focus (AXFocused), verified by read-back
           ghosthands snapshot <app> [--ax|--json]     dump the AX tree (pure read, default --ax)
           ghosthands extract <app> [--in <name>]      extract a table/outline/list as TSV rows (pure read)
-          ghosthands see <app> [--debug-port N] [--target n|title] [--no-ocr]   ONE fused eye: AX + CDP DOM + Vision OCR → ranked, de-duped, @ref-stamped list (then `act "@ref"`)
+          ghosthands see <app> [--debug-port N] [--target n|title] [--in <css>] [--no-ocr]   ONE fused eye: AX + CDP DOM + Vision OCR → ranked, de-duped, @ref-stamped list (then `act "@ref"`); --in scopes the CDP eye (composes with --target)
           ghosthands act "@ref" <app> [--type "<text>"] [--submit]   the unified actuator: act on a @ref from the last `see` — auto-picks the hand (AX/CDP/HID) by source, verifies or refuses (re-see if stale)
           ghosthands ocr <app>                        Vision OCR the window: recognized text + screen rects (no AX/DOM needed; needs Screen Recording)
           ghosthands ocr-click "<text>" <app>         find a phrase via OCR + click it (visible HID, verified by pixel-diff; refuses on no/ambiguous match)

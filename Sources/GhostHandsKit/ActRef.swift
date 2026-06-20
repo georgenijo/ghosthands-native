@@ -78,6 +78,14 @@ public enum ActHandPicker {
     public static func pick(_ record: SeeRecord, typing: Bool) -> ActHandChoice {
         switch record.source {
         case .ax:
+            // Only actionable controls are act candidates. A non-interactive AX row
+            // is a plain text/heading `see` surfaced for READING (it advertises
+            // tier "ax-read", never "ax-press") — refuse rather than press/type a
+            // non-candidate. (CDP is ref-gated below; OCR rows are non-interactive by
+            // construction but remain HID-clickable, so this gate is AX-scoped.)
+            guard record.interactive else {
+                return .refuse(reason: "not-actionable")
+            }
             return .hand(typing ? .axType : .axPress)
         case .cdp:
             guard record.cdpRef != nil else {
@@ -161,19 +169,28 @@ extension GhostHands {
         switch ActHandPicker.pick(record, typing: typing) {
         case let .refuse(reason):
             if reason == "ocr-only" { throw GhostHandsError.refNotTypeable(ref: ref) }
+            if reason == "not-actionable" { throw GhostHandsError.refNotActionable(ref: ref) }
             throw GhostHandsError.refStale(ref: ref, reason: reason)
 
         case .hand(.axPress):
-            // Re-find by NAME on a FRESH tree (never trust the stored rect); the
-            // click path refuses on not-found (stale) or ambiguity.
-            let o = try click(name: record.name, appSpec: target.name)
+            // Re-resolve THIS control by its stored AX IDENTITY (role + name + the
+            // ranked nth `see` pinned) on a FRESH tree — never by name alone, which
+            // with two distinct same-named controls could refuse needlessly or press
+            // the WRONG survivor. The stored rect is never trusted. The click path
+            // re-reads the live tree and refuses on not-found (stale), an out-of-range
+            // index (UI churn), or a remaining ambiguity.
+            let o = try click(name: record.name, appSpec: target.name,
+                              locator: record.axLocator)
             return result(record, ref: ref, app: target.name, tier: ActHand.axPress,
                           verified: o.verified,
                           evidence: o.verified ? (o.evidence ?? "changed")
                               : "AXPress accepted; effect unverified")
 
         case .hand(.axType):
-            let o = try type(text: typeText!, field: record.name, appSpec: target.name)
+            // Same identity pin for the typed-into field (re-resolve role + name +
+            // nth on a fresh tree, never name alone).
+            let o = try type(text: typeText!, field: record.name, appSpec: target.name,
+                             locator: record.axLocator)
             return result(record, ref: ref, app: target.name, tier: ActHand.axType,
                           verified: o.verified,
                           evidence: o.verified

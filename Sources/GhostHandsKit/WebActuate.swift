@@ -74,6 +74,53 @@ public enum WebRef {
     }
 }
 
+// MARK: - Pure: same-origin iframe → top-level offset accumulation
+
+/// The PURE model of the `ghFrameOffset` JS walk: an element inside one or more
+/// SAME-ORIGIN iframes has a frame-local `getBoundingClientRect()`; translating it
+/// to TOP-LEVEL viewport coords means summing each ancestor frame element's own
+/// bounding-rect offset, walking UP the `frameElement` chain. This enum factors out
+/// that summation as testable arithmetic — the JS does the same sum in-page over the
+/// live `frameElement` chain; here we verify the math an honest translation relies
+/// on (a chain sums; a cross-origin frame contributes nothing and stops the walk).
+public enum WebFrameOffset {
+    /// One link in the frame chain: either a SAME-ORIGIN frame whose offset we can
+    /// read, or a CROSS-ORIGIN frame whose `frameElement` access throws (the JS
+    /// try/catch stops the walk there — it is never reachable content anyway).
+    public enum Link: Sendable, Equatable {
+        case sameOrigin(dx: Double, dy: Double)
+        case crossOrigin
+    }
+
+    /// Accumulate a frame chain (ordered from the element's OWN frame outward to the
+    /// top document) into a single top-level offset. HONESTY: a `crossOrigin` link
+    /// STOPS the accumulation — we return the same-origin partial sum gathered SO FAR
+    /// and never sum past a boundary we can't read (no guessed offset). An empty chain
+    /// (a plain, un-framed element) yields {0,0} — unchanged, never shifted.
+    public static func accumulate(_ chain: [Link]) -> CGPoint {
+        var x = 0.0, y = 0.0
+        for link in chain {
+            switch link {
+            case let .sameOrigin(dx, dy):
+                x += dx
+                y += dy
+            case .crossOrigin:
+                return CGPoint(x: x, y: y)   // stop at the boundary; keep the partial sum
+            }
+        }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Translate a frame-local rect to TOP-LEVEL coords by shifting its origin by the
+    /// accumulated chain offset (the width/height are frame-independent). Mirrors what
+    /// `ghCollectRow` does in-page: `x: r.x + off.x, y: r.y + off.y`.
+    public static func translate(_ rect: CGRect, by chain: [Link]) -> CGRect {
+        let off = accumulate(chain)
+        return CGRect(x: rect.origin.x + off.x, y: rect.origin.y + off.y,
+                      width: rect.width, height: rect.height)
+    }
+}
+
 // MARK: - Pure: the occlusion + probe decision
 
 /// The decision a `web click` makes from the page probe ALONE — the testable
@@ -247,11 +294,14 @@ public enum WebActuate {
     }
 
     /// True iff the probe object reports the target lives in a SAME-ORIGIN IFRAME —
-    /// the gate `web click` uses to REFUSE: the click dispatch + occlusion guard run
-    /// in top-level viewport coords, but an iframe's box is iframe-relative, so an
-    /// offset iframe target would be clicked at the WRONG point (and could fabricate
-    /// a navigation-verified). We surface iframe elements for reading but refuse to
-    /// click them via uncorrected cross-frame geometry. Shadow-DOM is NOT inFrame.
+    /// the gate `web click` uses to REFUSE. The READ side now translates an iframe
+    /// element's frame-local rect to top-level coords (`ghFrameOffset`), so `web read`
+    /// / `see` report it at the right spot; but the CLICK side deliberately keeps the
+    /// refuse: the occlusion hit-test would still run inside the iframe's own document
+    /// and CANNOT see a top-document element overlaying the frame, so a translated
+    /// dispatch could still land on (or through) an unseen overlay and fabricate a
+    /// navigation-verified. An honest refuse beats a click at geometry whose occlusion
+    /// is unprovable across the frame boundary. Shadow-DOM is NOT inFrame.
     public static func isInFrame(from dict: [String: Any]) -> Bool {
         boolValue(dict["inFrame"])
     }

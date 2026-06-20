@@ -117,9 +117,17 @@ public enum WebFind {
               if (!score) continue;
               const r = el.getBoundingClientRect();
               if (r.width <= 0 || r.height <= 0) continue;   // not visibly laid out
-              const inVp = (r.top >= 0 && r.left >= 0
-                            && r.bottom <= innerHeight && r.right <= innerWidth) ? 1 : 0;
-              cands.push({ el, label, score, inVp, y: r.top, x: r.left });
+              // Translate a same-origin-iframe candidate's frame-local rect to
+              // TOP-LEVEL coords (offset {0,0} for a plain element) so the viewport
+              // test and the top-most (y then x) ranking compare apples to apples —
+              // an iframe control at frame-local (10,10) must not out-rank a
+              // top-level control just because its local y is small.
+              const off = ghFrameOffset(el);
+              const top = r.top + off.y, left = r.left + off.x;
+              const bottom = r.bottom + off.y, right = r.right + off.x;
+              const inVp = (top >= 0 && left >= 0
+                            && bottom <= innerHeight && right <= innerWidth) ? 1 : 0;
+              cands.push({ el, label, score, inVp, y: top, x: left });
             }
           });
           // Rank: exact > prefix > contains; in-viewport; top-most (y then x).

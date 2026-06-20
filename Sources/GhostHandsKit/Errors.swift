@@ -118,6 +118,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
     /// but there is no field handle to type into (no AX value, no DOM node). REFUSE
     /// rather than blind-type; re-`see` with a port/AX so the field is addressable.
     case refNotTypeable(ref: String)
+    /// `act "@ref"` targeted a NON-interactive row — `see` surfaced it as a plain
+    /// text/heading for reading (tier "ax-read"), not a clickable/typeable control.
+    /// Only actionable + enabled controls are act candidates → REFUSE, re-`see`.
+    case refNotActionable(ref: String)
     case cdpPortClosed(app: String, port: Int)
     /// A `--target <n|title>` selector matched NO debuggable page/renderer on the
     /// port (an out-of-range index, or a title/url substring that hit nothing). We
@@ -330,6 +334,10 @@ public enum GhostHandsError: Error, CustomStringConvertible, Sendable {
             return "\(ref) is an OCR-only target (located by Vision, no field handle) "
                 + "— can't type into it; re-`see` with a debug port / AX so the field "
                 + "is addressable"
+        case let .refNotActionable(ref):
+            return "\(ref) is not an actionable control — `see` surfaced it as a plain "
+                + "text/heading row for reading (tier ax-read), not something to click "
+                + "or type; re-`see` and use an interactive ref"
         case let .cdpTargetNotFound(query, app, available):
             let list = available.isEmpty ? "(none)"
                 : available.prefix(12).map { $0.debugDescription }.joined(separator: ", ")
