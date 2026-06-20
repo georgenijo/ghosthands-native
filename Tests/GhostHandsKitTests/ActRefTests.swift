@@ -6,9 +6,10 @@ import XCTest
 /// drives a live app (the env rule); the impure `actRef` dispatch is live-verified.
 final class ActRefTests: XCTestCase {
 
-    private func rec(_ ref: String, source: SeeSource, cdpRef: String? = nil) -> SeeRecord {
+    private func rec(_ ref: String, source: SeeSource, cdpRef: String? = nil,
+                     interactive: Bool = true) -> SeeRecord {
         SeeRecord(ref: ref, source: source, role: "button", name: "Go",
-                  rect: nil, interactive: true, cdpRef: cdpRef)
+                  rect: nil, interactive: interactive, cdpRef: cdpRef)
     }
     private func snap(app: String, pid: Int32?, records: [SeeRecord]) -> SeeSnapshot {
         SeeSnapshot(app: app, pid: pid, port: 9333, records: records)
@@ -87,6 +88,26 @@ final class ActRefTests: XCTestCase {
         // ocr + type → refuse (no field handle to type into).
         XCTAssertEqual(ActHandPicker.pick(rec("@1", source: .ocr), typing: true),
                        .refuse(reason: "ocr-only"))
+    }
+
+    func testPickNonInteractiveAxRefuses() {
+        // A non-interactive AX row is a plain text/heading `see` surfaced for reading
+        // (tier "ax-read") — act must REFUSE it (both click and type), never press a
+        // non-candidate. Enforces "only actionable + enabled controls are candidates".
+        let r = rec("@1", source: .ax, interactive: false)
+        XCTAssertEqual(ActHandPicker.pick(r, typing: false), .refuse(reason: "not-actionable"))
+        XCTAssertEqual(ActHandPicker.pick(r, typing: true), .refuse(reason: "not-actionable"))
+    }
+
+    func testPickOcrNonInteractiveStillHidClicks() {
+        // REGRESSION GUARD: `see` builds EVERY OCR row interactive:false (no AX/DOM
+        // action handle), yet OCR rows are HID-clickable by design (the shipped A3
+        // path). The non-actionable gate is AX-SCOPED, so a real-shaped OCR row must
+        // still pick .hidClick — and still refuse ocr+type. A broad interactive-only
+        // guard would wrongly refuse every OCR click; this locks that it does not.
+        let r = rec("@1", source: .ocr, interactive: false)
+        XCTAssertEqual(ActHandPicker.pick(r, typing: false), .hand(.hidClick))
+        XCTAssertEqual(ActHandPicker.pick(r, typing: true), .refuse(reason: "ocr-only"))
     }
 
     // MARK: - AX identity pin: two same-named controls resolve to the RIGHT one

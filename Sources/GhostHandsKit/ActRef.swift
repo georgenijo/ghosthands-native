@@ -78,6 +78,14 @@ public enum ActHandPicker {
     public static func pick(_ record: SeeRecord, typing: Bool) -> ActHandChoice {
         switch record.source {
         case .ax:
+            // Only actionable controls are act candidates. A non-interactive AX row
+            // is a plain text/heading `see` surfaced for READING (it advertises
+            // tier "ax-read", never "ax-press") — refuse rather than press/type a
+            // non-candidate. (CDP is ref-gated below; OCR rows are non-interactive by
+            // construction but remain HID-clickable, so this gate is AX-scoped.)
+            guard record.interactive else {
+                return .refuse(reason: "not-actionable")
+            }
             return .hand(typing ? .axType : .axPress)
         case .cdp:
             guard record.cdpRef != nil else {
@@ -161,6 +169,7 @@ extension GhostHands {
         switch ActHandPicker.pick(record, typing: typing) {
         case let .refuse(reason):
             if reason == "ocr-only" { throw GhostHandsError.refNotTypeable(ref: ref) }
+            if reason == "not-actionable" { throw GhostHandsError.refNotActionable(ref: ref) }
             throw GhostHandsError.refStale(ref: ref, reason: reason)
 
         case .hand(.axPress):
