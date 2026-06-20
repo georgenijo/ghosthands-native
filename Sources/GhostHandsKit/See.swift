@@ -251,9 +251,20 @@ public struct SeeRecord: Codable, Sendable, Equatable {
     public var rect: [Double]?
     public var interactive: Bool
     public var cdpRef: String?
+    /// The AX-IDENTITY pin for an `ax` row: this control's 0-based rank among the
+    /// SAME-(role, name) actuation candidates, in the deterministic
+    /// `Finder.candidateMatches` tree order that `act` re-resolves over. Stamped at
+    /// see-time SO `act "@ref"` can re-find THIS control by identity on a fresh tree
+    /// (role + name + nth) rather than collapsing the ref back to its name alone —
+    /// which, with two distinct same-named controls, could refuse unnecessarily or
+    /// act on the WRONG survivor. Nil for non-ax rows, or when see could not pin a
+    /// stable index (then `act` falls back to name+role and still refuses on
+    /// ambiguity — never guesses). See `ActRef.swift`.
+    public var axIndex: Int?
 
     public init(ref: String, source: SeeSource, role: String, name: String,
-                rect: [Double]?, interactive: Bool, cdpRef: String?) {
+                rect: [Double]?, interactive: Bool, cdpRef: String?,
+                axIndex: Int? = nil) {
         self.ref = ref
         self.source = source
         self.role = role
@@ -261,10 +272,13 @@ public struct SeeRecord: Codable, Sendable, Equatable {
         self.rect = rect
         self.interactive = interactive
         self.cdpRef = cdpRef
+        self.axIndex = axIndex
     }
 
-    /// Build a record from a fused row (rect → `[x,y,w,h]`).
-    public init(row: SeeRow) {
+    /// Build a record from a fused row (rect → `[x,y,w,h]`). `axIndex` is supplied
+    /// separately by the see gather (it needs a live AX re-walk to pin), defaulting
+    /// to nil for rows with no stable identity index.
+    public init(row: SeeRow, axIndex: Int? = nil) {
         self.ref = row.ref
         self.source = row.source
         self.role = row.role
@@ -272,6 +286,17 @@ public struct SeeRecord: Codable, Sendable, Equatable {
         self.rect = row.rect.map { [$0.minX, $0.minY, $0.width, $0.height] }
         self.interactive = row.interactive
         self.cdpRef = row.cdpRef
+        self.axIndex = axIndex
+    }
+
+    /// The stored AX identity as a reusable `LocatorSpec` — the SAME disambiguation
+    /// the click/type verbs accept (`--role`/`--text`/`--nth`). `act` re-resolves
+    /// THIS on a fresh tree instead of re-finding by name alone. Role always pins;
+    /// `nth` pins the among-same-name rank when see could stamp it. With no stored
+    /// index the spec still narrows by role and the verb refuses on a remaining
+    /// ambiguity (never silently picks).
+    public var axLocator: LocatorSpec {
+        LocatorSpec(role: role, text: nil, nth: axIndex)
     }
 
     /// The CGRect this record's `[x,y,w,h]` describes, or nil.

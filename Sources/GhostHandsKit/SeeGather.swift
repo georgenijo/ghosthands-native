@@ -154,10 +154,14 @@ extension GhostHands {
         // --- fuse (STABLE order ax → cdp → ocr so dedup is deterministic) ---
         let rows = SeeFusion.fuse(axInputs + cdpInputs + ocrInputs)
 
+        // --- pin each ax row's AX-identity index (role + name + nth) so `act`
+        // re-resolves THIS control on a fresh tree, never collapses to name alone.
+        let axIndex = axIdentityIndices(rows: rows, under: target.element)
+
         // --- persist the ref→record map for `act "@ref"` ---
         let snap = SeeSnapshot(app: target.name, pid: target.pid, port: usedPort,
                                cdpTargetId: usedTargetId,
-                               records: rows.map(SeeRecord.init(row:)))
+                               records: rows.map { SeeRecord(row: $0, axIndex: axIndex[$0.ref]) })
         if !SeeStore.save(snap) {
             notes.append("warning: could not persist the see snapshot — `act @ref` "
                 + "will refuse until the next see")
@@ -166,5 +170,60 @@ extension GhostHands {
         return SeeResult(app: target.name, rows: rows, axCount: axInputs.count,
                          cdpCount: cdpInputs.count, ocrCount: ocrInputs.count,
                          port: usedPort, notes: notes)
+    }
+
+    /// Stamp each `ax` fused row with the 0-based rank `act`'s `--nth` will use to
+    /// re-resolve it — its position among the SAME-(role, name) candidates in the
+    /// EXACT `Finder.candidateMatches` order `act` re-walks (so see-time and
+    /// act-time agree by construction). Returns `ref → nth`.
+    ///
+    /// HONESTY: this is a SECOND live read pinned to the same app root, so the index
+    /// reflects what the actuation path actually sees, not the fusion order. When a
+    /// (role, name) group's candidate count does NOT equal the number of fused rows
+    /// for it (the two reads disagree, or a non-actionable named row inflated the
+    /// fused group), NO row in that group is pinned — `act` then re-resolves by
+    /// role + name and REFUSES on the remaining ambiguity rather than guessing a
+    /// possibly-wrong index. A group with a single member needs no index (role +
+    /// name already pins it uniquely), so it is intentionally left nil.
+    @MainActor
+    static func axIdentityIndices(rows: [SeeRow], under appRoot: Element) -> [String: Int] {
+        // The ax rows that need a pin, in fused (ranked) order, grouped by identity.
+        let axRows = rows.filter { $0.source == .ax }
+        var groups: [String: [SeeRow]] = [:]      // (role\u{1}name) → fused rows
+        var order: [String] = []
+        for row in axRows {
+            let key = "\(row.role)\u{1}\(row.name)"
+            if groups[key] == nil { order.append(key) }
+            groups[key, default: []].append(row)
+        }
+
+        var out: [String: Int] = [:]
+        // Cache the live candidate walk per name (one walk serves every role group
+        // that shares the name).
+        var candidateCache: [String: [ElementFacts]] = [:]
+        for key in order {
+            let rowsInGroup = groups[key]!
+            guard rowsInGroup.count > 1 else { continue }   // unique → role+name pins it
+            let role = rowsInGroup[0].role
+            let name = rowsInGroup[0].name
+            guard !name.isEmpty else { continue }            // no name to re-find by
+
+            let candidates = candidateCache[name] ?? {
+                let facts = Finder.candidateMatches(named: name, under: appRoot,
+                                                    accept: Finder.isActionable).map { $0.1 }
+                candidateCache[name] = facts
+                return facts
+            }()
+            // The role-filtered survivors are exactly the pool `--nth` indexes into.
+            let roleSurvivors = candidates.indices.filter {
+                candidates[$0].role?.caseInsensitiveCompare(role) == .orderedSame
+            }
+            // Only pin when the actuation walk sees the SAME number of same-(role,
+            // name) controls the fused view does; otherwise the index could point at
+            // the wrong control — leave the group unpinned (act refuses on ambiguity).
+            guard roleSurvivors.count == rowsInGroup.count else { continue }
+            for (i, row) in rowsInGroup.enumerated() { out[row.ref] = i }
+        }
+        return out
     }
 }
