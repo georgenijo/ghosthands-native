@@ -457,6 +457,34 @@ public enum CDPDigest {
       };
       walk(document);
     };
+    // The cumulative TOP-LEVEL offset of an element that may live inside one or more
+    // SAME-ORIGIN iframes. `getBoundingClientRect()` is FRAME-LOCAL (relative to the
+    // element's own iframe viewport), but the digest / see / occlusion / click all
+    // speak TOP-LEVEL viewport coords. Walk UP the `frameElement` chain summing each
+    // frame element's own bounding rect (each is expressed in ITS parent's viewport,
+    // so the running sum lands the element in the top document's coords). HONESTY:
+    //   - the top document has no frameElement → offset {0,0} (a plain element is
+    //     unchanged, never shifted).
+    //   - a CROSS-ORIGIN frame throws on `frameElement` / its window access; the
+    //     try/catch STOPS the walk there. We never reach a cross-origin frame's
+    //     contents anyway (contentDocument throws), so this is a defensive guard, not
+    //     a guessed offset — a partial sum is only ever returned for reachable
+    //     same-origin frames we actually descended.
+    // A `guard` counter bounds a pathological self-referential frame chain.
+    const ghFrameOffset = (el) => {
+      let x = 0, y = 0, guard = 0;
+      try {
+        let win = el.ownerDocument && el.ownerDocument.defaultView;
+        while (win && win.frameElement && guard++ < 50) {
+          const fr = win.frameElement.getBoundingClientRect();
+          x += fr.left; y += fr.top;
+          const parent = win.parent;
+          if (parent === win) break;   // top window is its own parent — stop
+          win = parent;
+        }
+      } catch (e) { /* cross-origin ancestor: stop, keep the same-origin partial sum */ }
+      return { x, y };
+    };
     // A shadow/iframe-piercing single-element lookup: return the FIRST element
     // matching `sel` across all reachable roots, or null. Used to RE-FIND a
     // `[data-gh-ref]`/`[data-gh-find]` node stamped inside a shadow root — a plain
@@ -491,6 +519,12 @@ public enum CDPDigest {
     static let collectRowJS = """
     const ghCollectRow = (el, out, ctx, interactive) => {
       const r = el.getBoundingClientRect();
+      // Translate a SAME-ORIGIN-iframe element's frame-local rect to TOP-LEVEL
+      // viewport coords by summing its `frameElement` offset chain — so a control
+      // inside an iframe reads at the SAME coordinate space as a top-level control
+      // (and `see` / occlusion / pixel-targeting stay consistent). A plain
+      // (non-framed) element gets offset {0,0}, i.e. is unchanged.
+      const off = ghFrameOffset(el);
       const tag = el.tagName.toLowerCase();
       const type = ((el.getAttribute && el.getAttribute('type')) || '').toLowerCase();
       // Role: an explicit aria role wins; else the tag — but an <input> is
@@ -525,7 +559,7 @@ public enum CDPDigest {
       if (axExp === 'true' || axExp === 'false') expanded = (axExp === 'true');
       const disabled = !!el.disabled;
       out.push({ ref, role, name, value, checked, selected, expanded, disabled,
-                 x: r.x, y: r.y, w: r.width, h: r.height });
+                 x: r.x + off.x, y: r.y + off.y, w: r.width, h: r.height });
     };
     """
 
