@@ -44,15 +44,22 @@ extension GhostHands {
         }
     }
 
-    /// `see <app> [--debug-port N] [--target n|title] [--no-ocr]` — ONE fused eye.
-    /// Merges the AX tree + (when a debug port truly belongs to the target) the CDP
-    /// DOM + (when Screen Recording is granted) Vision OCR into a single ranked,
-    /// de-duplicated, `@ref`-stamped list, and PERSISTS the ref→record map so
-    /// `act "@ref"` can re-actuate. Pure READ — never fabricates an element; an app
-    /// the eyes see nothing in returns an honest empty list.
+    /// `see <app> [--debug-port N] [--target n|title] [--in <css>] [--no-ocr]` —
+    /// ONE fused eye. Merges the AX tree + (when a debug port truly belongs to the
+    /// target) the CDP DOM + (when Screen Recording is granted) Vision OCR into a
+    /// single ranked, de-duplicated, `@ref`-stamped list, and PERSISTS the
+    /// ref→record map so `act "@ref"` can re-actuate. Pure READ — never fabricates
+    /// an element; an app the eyes see nothing in returns an honest empty list.
+    ///
+    /// `scope` (`--in <css>`) restricts the CDP eye to a container, and COMPOSES
+    /// with `pick` (`--target`): the scope is read off the `--target`-picked
+    /// renderer, so a `--target` no-match is honored (the CDP eye is skipped with a
+    /// note) rather than silently scoping the default renderer. The AX/OCR eyes are
+    /// whole-app (no CSS equivalent) — `--in` only narrows the CDP eye.
     @MainActor
     public static func see(appSpec: String, debugPort: Int? = nil,
                            pick: CDPTargetPick.Selector? = nil,
+                           scope: String? = nil,
                            runOCR: Bool = true) async throws -> SeeResult {
         guard AXPermissionHelpers.hasAccessibilityPermissions() else {
             throw GhostHandsError.accessibilityNotTrusted
@@ -105,7 +112,7 @@ extension GhostHands {
         }
         if let p = candidatePort, await CDPDiscovery.isPortOpen(p) {
             do {
-                let result = try await webReadCDP(target: target, port: p, pick: pick)
+                let result = try await webReadCDP(target: target, port: p, pick: pick, scope: scope)
                 usedPort = p
                 usedTargetId = result.cdpTargetId   // pin act's reattach to this renderer
                 for e in result.entries {

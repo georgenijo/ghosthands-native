@@ -978,7 +978,8 @@ extension GhostHands {
     /// Slice 1's digest is flat (point-in-time, no nested refs).
     @MainActor
     static func webReadCDP(target: Target, port: Int,
-                           pick: CDPTargetPick.Selector? = nil) async throws -> WebReadResult {
+                           pick: CDPTargetPick.Selector? = nil,
+                           scope: String? = nil) async throws -> WebReadResult {
         // Connect to a PAGE target's OWN debugger socket, not the browser-level
         // /json/version endpoint — the browser endpoint has no Runtime domain
         // (it answers "Runtime.enable wasn't found"). Default reads the FIRST
@@ -986,6 +987,13 @@ extension GhostHands {
         // (multi-window Electron). Honest empty when the port lists no debuggable
         // page at all; a `--target` that matches nothing REFUSES (never an arbitrary
         // renderer).
+        //
+        // `scope` (`see --in <css>`) restricts the digest to a CSS container on the
+        // PICKED renderer — so `--in` and `--target` COMPOSE: the scope is read off
+        // the `--target` page, and a `--target` no-match REFUSES here (above, before
+        // any scope probe) rather than silently scoping the default renderer. A
+        // scope matching no container REFUSES distinctly (`selectorNotFound`); a
+        // present-but-empty container reads honestly empty.
         let targets = try await CDPDiscovery.list(port: port, app: target.name)
         let pages = targets.filter { !$0.webSocketDebuggerUrl.isEmpty }
         guard !pages.isEmpty else {
@@ -999,12 +1007,24 @@ extension GhostHands {
         try assertUnambiguousPick(pick, choice, app: target.name, pages: pages)
         let session = try CDPSession.open(wsURL: choice.target.webSocketDebuggerUrl)
         _ = try await session.call("Runtime.enable")
-        let result = try await session.call("Runtime.evaluate", params: [
-            "expression": CDPDigest.evaluateExpression,
-            "returnByValue": true,
-            "awaitPromise": true,
-        ])
-        let rows = evaluateRows(from: result)
+        let rows: [[String: Any]]
+        if let scope {
+            // Scoped digest: the container is read on the SAME `--target`-picked
+            // page. A no-match container REFUSES (never a fabricated empty scope).
+            let reply = try await evaluateObject(
+                session, CDPDigest.scopedEvaluateExpression(container: scope))
+            guard WebActuate.boolValue(reply["found"]) else {
+                throw GhostHandsError.selectorNotFound(selector: scope, app: target.name)
+            }
+            rows = (reply["rows"] as? [Any])?.compactMap { $0 as? [String: Any] } ?? []
+        } else {
+            let result = try await session.call("Runtime.evaluate", params: [
+                "expression": CDPDigest.evaluateExpression,
+                "returnByValue": true,
+                "awaitPromise": true,
+            ])
+            rows = evaluateRows(from: result)
+        }
         let entries = CDPDigest.entries(fromEvaluate: rows)
         // A reachable CDP page IS a web surface (hasWebArea = true), so the CLI
         // footer reports element count rather than "no page". Carry the chosen

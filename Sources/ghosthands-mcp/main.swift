@@ -137,7 +137,7 @@ struct GhostHandsMCP {
                 let r = try await GhostHands.see(
                     appSpec: arg("app"),
                     debugPort: MCPProtocol.int("debugPort", from: arguments),
-                    pick: pick, runOCR: !flag("no_ocr"))
+                    pick: pick, scope: optStr("in"), runOCR: !flag("no_ocr"))
                 return MCPMapping.fromEnvelope(.fromSee(r))
             case "snapshot":
                 let o = try GhostHands.snapshot(appSpec: arg("app"))

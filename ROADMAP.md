@@ -243,7 +243,11 @@ identity), #2 (always-on daemon + AXObserver — deferred, needs a design pass).
   (so iframe `@ref`s become CLICKABLE, not just readable — currently an honest refuse). Niche
   + honesty-sensitive (the coord math is exactly the fabrication-risk the iframe refuse
   guards); worth doing carefully with fresh attention rather than at a session tail.
-- Tiny: `see --in <css>` honoring `--target`.
+- ~~Tiny: `see --in <css>` honoring `--target`.~~ ✅ shipped — `see --in <css>` scopes
+  the CDP eye to a container and COMPOSES with `--target`: the scope reads off the
+  `--target`-picked renderer, a `--target` no-match skips the CDP eye (note) rather
+  than silently scoping the default, and a no-match container REFUSES. Parse pulled
+  into a pure, hermetically-tested `SeeArgs`.
 
 **Out of scope (NOT this tool's job — George owns it):** the brain / goal-planner,
 the phone ingress, "text-it-a-task", auth for remote control. This tool is the
