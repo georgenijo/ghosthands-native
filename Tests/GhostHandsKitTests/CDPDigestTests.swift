@@ -166,6 +166,80 @@ final class CDPDigestTests: XCTestCase {
         XCTAssertNil(WebActuate.optBool(NSNull()))
     }
 
+    // MARK: - web-digest-aria — ARIA interactive roles / [onclick] / <summary> /
+    // contenteditable surfaced + ref-stamped by the digest.
+    //
+    // NOTE ON SURFACE: the interactive GATE (which DOM elements get gathered + a
+    // `data-gh-ref` stamped) lives in the embedded `CDPDigest.interactiveJS` /
+    // `collectRowJS` JS strings, evaluated IN THE PAGE — there is no pure-Swift
+    // gate to unit-test directly (driving a live browser in a test is banned).
+    // The nearest PURE Swift surfaces are: (1) `axRole(for:)`, the role→AX-role
+    // renderer the digest uses for the new ARIA roles, and (2) `entries(fromEvaluate:)`,
+    // which must KEEP a ref-stamped ARIA/contenteditable/onclick row (a stamped row
+    // is an actionable control, never noise). Both are exercised below over
+    // FABRICATED rows — no socket, no browser.
+
+    /// The new ARIA interactive roles a non-native control reports (a
+    /// `div[role=switch]`, a `<summary>`, `role=menuitem`, …) render as a clean
+    /// AX-ish role on the digest line, not a raw HTML word. Additive — the original
+    /// mappings are unchanged.
+    func testAxRoleMapsAriaInteractiveRoles() {
+        XCTAssertEqual(CDPDigest.axRole(for: "switch"), "AXCheckBox")
+        XCTAssertEqual(CDPDigest.axRole(for: "menuitemcheckbox"), "AXCheckBox")
+        XCTAssertEqual(CDPDigest.axRole(for: "menuitemradio"), "AXRadioButton")
+        XCTAssertEqual(CDPDigest.axRole(for: "tab"), "AXTab")
+        XCTAssertEqual(CDPDigest.axRole(for: "menuitem"), "AXMenuItem")
+        XCTAssertEqual(CDPDigest.axRole(for: "option"), "AXMenuItem")
+        XCTAssertEqual(CDPDigest.axRole(for: "slider"), "AXSlider")
+        XCTAssertEqual(CDPDigest.axRole(for: "spinbutton"), "AXStepper")
+        XCTAssertEqual(CDPDigest.axRole(for: "searchbox"), "AXTextField")
+        XCTAssertEqual(CDPDigest.axRole(for: "summary"), "AXButton")
+        // Original mappings untouched (no regression).
+        XCTAssertEqual(CDPDigest.axRole(for: "button"), "AXButton")
+        XCTAssertEqual(CDPDigest.axRole(for: "link"), "AXLink")
+        XCTAssertEqual(CDPDigest.axRole(for: "checkbox"), "AXCheckBox")
+        XCTAssertEqual(CDPDigest.axRole(for: "combobox"), "AXComboBox")
+    }
+
+    /// An ARIA-role row the digest now stamps (e.g. a `div[role=button]`) carries
+    /// its `@eN` ref through to the entry and renders the handle on the line — so an
+    /// Electron `div[role=button]` is addressable, not invisible. The role surfaces
+    /// as AXButton even though the underlying tag is a div.
+    func testAriaButtonRowStampedAndAddressable() {
+        let rows: [[String: Any]] = [
+            ["ref": "e1", "role": "button", "name": "Send",
+             "x": 12.0, "y": 30.0, "w": 64.0, "h": 28.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].ref, "@e1")
+        XCTAssertEqual(entries[0].facts.role, "AXButton")
+        XCTAssertEqual(WebDigest.line(entries[0]),
+                       "@e1 AXButton \"Send\" @(12,30 64×28)")
+    }
+
+    /// A contenteditable editor (Cursor/Lexical/ProseMirror compose box) and a bare
+    /// `<div onclick>` are non-native interactive controls: the digest now stamps a
+    /// ref, so even with an empty value they SURVIVE shaping (a ref-stamped row is an
+    /// actionable control, never dropped as noise) and their raw role passes through
+    /// honestly (a div is a div, never fabricated into a button).
+    func testContenteditableAndOnclickRowsKept() {
+        let rows: [[String: Any]] = [
+            // A contenteditable composer: role is its tag (no aria role), empty value.
+            ["ref": "e1", "role": "div", "name": "Ask anything", "value": "",
+             "x": 0.0, "y": 0.0, "w": 320.0, "h": 40.0],
+            // A clickable <div onclick> with no name/value but a stamped ref.
+            ["ref": "e2", "role": "div", "name": "", "value": "",
+             "x": 5.0, "y": 5.0, "w": 20.0, "h": 20.0],
+        ]
+        let entries = CDPDigest.entries(fromEvaluate: rows)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].ref, "@e1")
+        XCTAssertEqual(entries[0].facts.role, "div")     // honest passthrough, not faked
+        XCTAssertEqual(entries[0].facts.title, "Ask anything")
+        XCTAssertEqual(entries[1].ref, "@e2")            // kept purely on the ref signal
+    }
+
     /// The browser-surface routing hint: a browser bundle id probes CDP; a native
     /// app (or nil bundle) never does.
     func testIsBrowserSurfaceHint() {

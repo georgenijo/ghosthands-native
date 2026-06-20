@@ -416,6 +416,51 @@ public enum CDPDigest {
     };
     """
 
+    /// The SINGLE source of truth for "is this element an interactive control the
+    /// digest should surface + stamp a ref on". Shared by BOTH digests (page +
+    /// scoped) and the ref-stamp gate so the CSS query and the per-element gate can
+    /// never drift apart. Extends the original NATIVE-tag set additively: a control
+    /// is interactive iff it is one of the native interactive tags
+    /// (a/button/input/select/textarea), OR it carries an ARIA interactive role
+    /// (button, link, checkbox, radio, switch, tab, menuitem(+checkbox/radio),
+    /// option, textbox, combobox, slider, spinbutton, searchbox), OR it has an
+    /// [onclick] handler, is a <summary> (a native disclosure trigger), or is
+    /// contenteditable. This matches the `--text` resolver's candidate set so any
+    /// element the digest STAMPS is later RE-FINDABLE by that resolver — never a
+    /// fabricated handle. HONESTY: it only classifies elements ACTUALLY present in
+    /// the (open shadow / same-origin) DOM; nothing here invents a node.
+    static let interactiveJS = """
+    const ghAriaInteractiveRoles = new Set(['button','link','checkbox','radio',
+      'switch','tab','menuitem','menuitemcheckbox','menuitemradio','option',
+      'textbox','combobox','slider','spinbutton','searchbox']);
+    const ghNativeInteractiveTags = new Set(['a','button','input','select','textarea']);
+    // The CSS query that GATHERS interactive candidates (the union above). Native
+    // tags first (so currently-surfaced controls are never dropped), then the ARIA
+    // roles, [onclick], <summary>, and the two contenteditable forms.
+    const ghInteractiveSelector = ['a','button','input','select','textarea','summary',
+      '[onclick]', '[contenteditable=""]', '[contenteditable="true"]', '[contenteditable="plaintext-only"]']
+      .concat([...ghAriaInteractiveRoles].map((r) => '[role="' + r + '"]'))
+      .join(',');
+    // The PER-ELEMENT gate the ref stamp uses (an element gathered by a parent
+    // selector but not itself interactive must NOT get a ref). Guarded so a missing
+    // getAttribute / detached node degrades to false rather than throwing.
+    const ghIsInteractive = (el) => {
+      try {
+        const tag = el.tagName.toLowerCase();
+        if (ghNativeInteractiveTags.has(tag)) return true;
+        if (tag === 'summary') return true;
+        const role = (el.getAttribute('role') || '').trim().toLowerCase();
+        if (role && ghAriaInteractiveRoles.has(role)) return true;
+        if (el.hasAttribute('onclick')) return true;
+        if (el.isContentEditable === true) return true;
+        const ce = (el.getAttribute('contenteditable') || '').toLowerCase();
+        if (ce === '' && el.hasAttribute('contenteditable')) return true;
+        if (ce === 'true' || ce === 'plaintext-only') return true;
+      } catch (e) {}
+      return false;
+    };
+    """
+
     /// JS that walks EVERY reachable root — the document, plus each OPEN shadow
     /// root, plus each SAME-ORIGIN iframe's contentDocument — letting a caller run
     /// its own per-root `querySelectorAll`. This is the shadow/iframe piercing the
@@ -517,7 +562,7 @@ public enum CDPDigest {
     /// so the page digest, the scoped digest, AND the shadow/iframe descent all emit
     /// IDENTICALLY-shaped rows from ONE definition (no drift between paths).
     static let collectRowJS = """
-    const ghCollectRow = (el, out, ctx, interactive) => {
+    const ghCollectRow = (el, out, ctx) => {
       const r = el.getBoundingClientRect();
       // Translate a SAME-ORIGIN-iframe element's frame-local rect to TOP-LEVEL
       // viewport coords by summing its `frameElement` offset chain — so a control
@@ -537,11 +582,15 @@ public enum CDPDigest {
       }
       const name = accName(el, tag);
       // Stamp a shared ref on INTERACTIVE elements only (headings are read for
-      // context, never clicked). The attribute IS the persistent ref store: it
-      // lives in the browser's DOM across separate CLI processes, and its
-      // absence after a nav/re-render is the honest staleness signal.
+      // context, never clicked). `ghIsInteractive` is the shared gate (native tag
+      // OR ARIA interactive role OR [onclick]/<summary>/contenteditable) — so a
+      // div[role=button], an [onclick] handler, a <summary>, or a contenteditable
+      // editor gets a usable @eN, not just native tags. The attribute IS the
+      // persistent ref store: it lives in the browser's DOM across separate CLI
+      // processes, and its absence after a nav/re-render is the honest staleness
+      // signal. (Every stamped node is re-findable by the same `--text` resolver.)
       let ref = '';
-      if (interactive.includes(tag)) { ref = 'e' + (++ctx.n); el.setAttribute('data-gh-ref', ref); }
+      if (ghIsInteractive(el)) { ref = 'e' + (++ctx.n); el.setAttribute('data-gh-ref', ref); }
       // Form-control STATE (issue #8). A checkbox/radio's signal is `checked`,
       // NOT its meaningless default value "on" — so we emit checked and leave
       // value empty for those. A <select> reports its chosen option's text.
@@ -572,20 +621,23 @@ public enum CDPDigest {
     (() => {
       \(accNameJS)
       \(shadowPierceJS)
+      \(interactiveJS)
       \(collectRowJS)
       // Clear any `data-gh-ref` from a PRIOR read first (across ALL roots): refs are
       // valid only until the next read or a navigation, so a re-read SUPERSEDES — old
       // handles must not linger and collide with the new numbering.
       ghClearRefs();
       const out = [];
-      const interactive = ['a','button','input','select','textarea'];
-      const text = ['h1','h2','h3','h4','h5','h6'];
-      const wanted = interactive.concat(text).join(',');
+      // Gather the union of interactive controls (native tags + ARIA roles +
+      // [onclick]/<summary>/contenteditable) AND text/heading context nodes. The
+      // ref gate inside ghCollectRow stamps ONLY the genuinely interactive ones.
+      const text = ['h1','h2','h3','h4','h5','h6'].join(',');
+      const wanted = ghInteractiveSelector + ',' + text;
       const ctx = { n: 0 };
       ghForEachRoot((root) => {
         let els;
         try { els = root.querySelectorAll(wanted); } catch (e) { els = []; }
-        for (const el of els) ghCollectRow(el, out, ctx, interactive);
+        for (const el of els) ghCollectRow(el, out, ctx);
       });
       return out;
     })()
@@ -606,14 +658,16 @@ public enum CDPDigest {
         (() => {
           \(accNameJS)
           \(shadowPierceJS)
+          \(interactiveJS)
           \(collectRowJS)
           const root = ghQuery(\(sel));
           if (!root) return { found: false };
           ghClearRefs();
           const out = [];
-          const interactive = ['a','button','input','select','textarea'];
-          const text = ['h1','h2','h3','h4','h5','h6'];
-          const wanted = interactive.concat(text).join(',');
+          // Same union as the page digest: native interactive tags + ARIA roles +
+          // [onclick]/<summary>/contenteditable, plus text/heading context nodes.
+          const text = ['h1','h2','h3','h4','h5','h6'].join(',');
+          const wanted = ghInteractiveSelector + ',' + text;
           const ctx = { n: 0 };
           // Walk the container's own subtree, then descend into any open shadow
           // roots / same-origin iframes nested anywhere under it.
@@ -623,7 +677,7 @@ public enum CDPDigest {
             seen.add(node);
             let els;
             try { els = node.querySelectorAll(wanted); } catch (e) { els = []; }
-            for (const el of els) ghCollectRow(el, out, ctx, interactive);
+            for (const el of els) ghCollectRow(el, out, ctx);
             let all;
             try { all = node.querySelectorAll('*'); } catch (e) { all = []; }
             for (const el of all) {
@@ -646,12 +700,16 @@ public enum CDPDigest {
     public static func axRole(for role: String) -> String {
         switch role.lowercased() {
         case "a", "link": return "AXLink"
-        case "button": return "AXButton"
-        case "input", "textbox", "textfield": return "AXTextField"
+        case "button", "summary": return "AXButton"
+        case "input", "textbox", "textfield", "searchbox": return "AXTextField"
         case "textarea": return "AXTextArea"
         case "select", "combobox": return "AXComboBox"
-        case "checkbox": return "AXCheckBox"
-        case "radio": return "AXRadioButton"
+        case "checkbox", "menuitemcheckbox", "switch": return "AXCheckBox"
+        case "radio", "menuitemradio": return "AXRadioButton"
+        case "tab": return "AXTab"
+        case "menuitem", "option": return "AXMenuItem"
+        case "slider": return "AXSlider"
+        case "spinbutton": return "AXStepper"
         case "h1", "h2", "h3", "h4", "h5", "h6", "heading": return "AXHeading"
         default: return role
         }
